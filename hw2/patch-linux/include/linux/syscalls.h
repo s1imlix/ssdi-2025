@@ -1066,6 +1066,7 @@ asmlinkage long sys_set_mempolicy_home_node(unsigned long start,
 					    unsigned long flags);
 
 asmlinkage long sys_remap_page_table(struct expose_pgtbl_args __user *args);
+asmlinkage long sys_walk_page_tables(struct walk_page_args __user *args);
 
 /*
  * Architecture-specific system calls

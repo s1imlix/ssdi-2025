@@ -480,3 +480,4 @@ COND_SYSCALL(setuid16);
 COND_SYSCALL(rseq);
 
 COND_SYSCALL(remap_page_table);
+COND_SYSCALL(walk_page_table);

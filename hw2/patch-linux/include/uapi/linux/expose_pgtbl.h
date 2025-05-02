@@ -14,4 +14,10 @@ struct expose_pgtbl_args {
 	unsigned int level;
 };
 
+struct walk_page_args {
+	pid_t pid;           
+	unsigned long vaddr; 
+	unsigned long paddr; 
+};
+
 #endif /* _UAPI_EXPOSE_PGTBL_H */
