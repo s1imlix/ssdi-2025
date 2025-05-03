@@ -13,7 +13,7 @@ void print_pagetable_page(void *addr) {
    */
 
   // iterate through all pages
-  int NUM_PAGES = PAGE_SIZE / (1 << 6); // 64 bytes per page
+  int NUM_PAGES = PAGE_SIZE / (1 << 3); // 8 bytes per page
   uint64_t *page_table = (uint64_t *)addr;
   for (int i = 0; i < NUM_PAGES; i++) {
     printf("PTE[%02d] = 0x%016lx\n", i, page_table[i]);
