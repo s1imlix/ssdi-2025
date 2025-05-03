@@ -1,11 +1,16 @@
 #ifndef HELPER_H
 #define HELPER_H
 
+#include <sys/types.h> 
 #include <linux/expose_pgtbl.h>
 #include <unistd.h>
 
 #ifndef __NR_remap_page_table
 #define __NR_remap_page_table 451
+#endif
+
+#ifndef __NR_walk_page_table
+#define __NR_walk_page_table 452
 #endif
 
 static inline long remap_page_table(struct expose_pgtbl_args *args) {
