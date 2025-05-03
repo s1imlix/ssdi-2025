@@ -884,8 +884,11 @@ __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
 #define __NR_remap_page_table 451
 __SYSCALL(__NR_remap_page_table, sys_remap_page_table)
 
+#define __NR_walk_page_table 452
+__SYSCALL(__NR_walk_page_table, sys_walk_page_table)
+
 #undef __NR_syscalls
-#define __NR_syscalls 452
+#define __NR_syscalls 453
 
 /*
  * 32 bit systems traditionally used different

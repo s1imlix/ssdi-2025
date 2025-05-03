@@ -2863,3 +2863,94 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 	mmap_write_unlock(mm);
 	return ret;
 }
+
+SYSCALL_DEFINE1(walk_page_table, struct walk_page_args __user *, args)
+ {
+     //struct walk_page_args args;
+     struct task_struct *task;
+     struct mm_struct *mm;
+     pgd_t *pgd;
+     p4d_t *p4d;
+     pud_t *pud;
+     pmd_t *pmd;
+     pte_t *pte;
+     spinlock_t *ptl; // Declare pointer for the lock
+ 
+     unsigned long pfn;
+ 
+     task = find_task_by_vpid(args->pid);
+     if (!task)
+         return -EINVAL;
+
+	printk(KERN_INFO "walk_page_table: pid: %d, vaddr: %lx\n",
+		args->pid, args->vaddr);
+ 
+     get_task_struct(task);
+     mm = task->mm;
+     if (!mm) {
+         put_task_struct(task);
+         return -EINVAL;
+     }
+
+	 printk(KERN_INFO "walk_page_table: mm: %p\n", mm);
+ 
+     mmap_read_lock(mm);
+ 
+     pgd = pgd_offset(mm, args->vaddr);
+     if (pgd_none(*pgd) || pgd_bad(*pgd)) {
+         printk(KERN_INFO "Invalid PGD entry\n");
+         mmap_read_unlock(mm);
+         put_task_struct(task);
+         return -EINVAL;
+     }
+	 printk(KERN_INFO "walk_page_table: pgd: %p\n", pgd);
+     p4d = p4d_offset(pgd, args->vaddr);
+     if (p4d_none(*p4d) || p4d_bad(*p4d)) {
+         printk(KERN_INFO "Invalid P4D entry\n");
+         mmap_read_unlock(mm);
+         put_task_struct(task);
+         return -EINVAL;
+     }
+	 printk(KERN_INFO "walk_page_table: p4d: %p\n", p4d);
+     pud = pud_offset(p4d, args->vaddr);
+     if (pud_none(*pud) || pud_bad(*pud)) {
+         printk(KERN_INFO "Invalid PUD entry\n");
+         mmap_read_unlock(mm);
+         put_task_struct(task);
+         return -EINVAL;
+     }
+	 printk(KERN_INFO "walk_page_table: pud: %p\n", pud);
+     pmd = pmd_offset(pud, args->vaddr);
+     if (pmd_none(*pmd) || pmd_bad(*pmd)) {
+         printk(KERN_INFO "Invalid PMD entry\n");
+         mmap_read_unlock(mm);
+         put_task_struct(task);
+         return -EINVAL;
+     }
+	 printk(KERN_INFO "walk_page_table: pmd: %p\n", pmd);
+     pte = pte_offset_map_lock(mm, pmd, args->vaddr, &ptl);
+ 
+     if (pte_none(*pte)) {
+         printk(KERN_INFO "Invalid PTE entry\n");
+         // Pass ptl to unlock
+         pte_unmap_unlock(pte, ptl);
+         mmap_read_unlock(mm);
+         put_task_struct(task);
+         return -EINVAL;
+     }
+	 printk(KERN_INFO "walk_page_table: pte: %p\n", pte);
+     pfn = pte_pfn(*pte);
+     if (pfn_valid(pfn)) {
+        args->paddr = (pfn << PAGE_SHIFT) | (args->vaddr & ~PAGE_MASK);
+        printk(KERN_INFO "PFN: %lx, VADDR: %lx, PADDR: %lx\n", 
+               pfn, args->vaddr, args->paddr);
+    } else {
+         printk(KERN_INFO "Invalid PFN\n");
+     }
+
+     pte_unmap_unlock(pte, ptl);
+     mmap_read_unlock(mm);
+     put_task_struct(task);
+     return 0;
+ 
+ }
