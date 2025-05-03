@@ -5,7 +5,7 @@
 
 struct expose_pgtbl_args {
 	// PID of the target task
-	pid_t pid;
+	int pid;
 	// User-space virtual address to map the page table page
 	unsigned long remap_vaddr;
 	// Physical frame number from the previous level page table entry

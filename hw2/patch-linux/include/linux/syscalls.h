@@ -73,6 +73,8 @@ struct mount_attr;
 struct landlock_ruleset_attr;
 enum landlock_rule_type;
 
+struct expose_pgtbl_arg;
+
 #include <linux/types.h>
 #include <linux/aio_abi.h>
 #include <linux/capability.h>
@@ -85,6 +87,7 @@ enum landlock_rule_type;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <linux/personality.h>
+#include <linux/expose_pgtbl.h>
 #include <trace/syscall.h>
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER

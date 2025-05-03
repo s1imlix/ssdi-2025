@@ -77,8 +77,6 @@
 
 #include "uid16.h"
 
-#include <linux/expose_pgtbl.h>
-
 #ifndef SET_UNALIGN_CTL
 #define SET_UNALIGN_CTL(a, b) (-EINVAL)
 #endif
@@ -2803,18 +2801,26 @@ COMPAT_SYSCALL_DEFINE1(sysinfo, struct compat_sysinfo __user *, info)
 }
 #endif /* CONFIG_COMPAT */
 
+struct expose_pgtbl_args {
+	// PID of the target task
+	pid_t pid;
+	// User-space virtual address to map the page table page
+	unsigned long remap_vaddr;
+	// Physical frame number from the previous level page table entry
+	unsigned long pfn;
+	// page table level (0: PGD, 1: PUD, 2: PMD, 3: PTE)
+	unsigned int level;
+};
+
 SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 {
-	/*
-   TODO: check pfn_valid, what does it mean by not aligned?
-   */
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
 	int vaddr_not_aligned;
 	struct page *pgd_page;
 	int ret;
-	
+
 	if (args->level < 0 || args->level > 3)
 		return -EINVAL;
 	vaddr_not_aligned = args->remap_vaddr & ((1UL << 12) - 1);
@@ -2828,14 +2834,14 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 	mm = task->mm;
 
 	if (args->level == 0) {
-        pgd_t *pgd_va = mm->pgd;
-        if (!pgd_va) { 
-            return -EINVAL;
-        }
+		pgd_t *pgd_va = mm->pgd;
+		if (!pgd_va) {
+			return -EINVAL;
+		}
 		pgd_page = virt_to_page(pgd_va);
 		args->pfn = page_to_pfn(pgd_page);
 		printk(KERN_INFO "PGD PFN: %lx\n", args->pfn);
-    } 
+	}
 
 	if (pfn_valid(args->pfn) == 0)
 		return -EINVAL;
@@ -2850,14 +2856,10 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 
 	mmap_write_lock(mm);
 	printk(KERN_INFO "remap_page_table: vaddr: %lx, pfn: %lx\n",
-		args->remap_vaddr, args->pfn);
+	       args->remap_vaddr, args->pfn);
 	ret = remap_pfn_range(vma, args->remap_vaddr, args->pfn, 4096,
-			vma->vm_page_prot);
-	if (ret) {
-		mmap_write_unlock(mm);
-		return ret;
-	}
+			      vma->vm_page_prot);
+	printk(KERN_INFO "remap_page_table: ret: %d\n", ret);
 	mmap_write_unlock(mm);
-
 	return ret;
 }
