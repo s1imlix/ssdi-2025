@@ -2827,8 +2827,9 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 		if (!pgd_va) {
 			return -EINVAL;
 		}
-		pgd_page = virt_to_page(pgd_va);
-		args->pfn = page_to_pfn(pgd_page);
+		// pgd_page = virt_to_page(pgd_va);
+		// args->pfn = page_to_pfn(pgd_page);
+		args->pfn = virt_to_pfn(pgd_va);
 		printk(KERN_INFO "PGD PFN: %lx\n", args->pfn);
 	}
 
