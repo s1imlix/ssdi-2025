@@ -15,7 +15,7 @@
 
 int main(int argc, char **argv) {
   // Allocate memory region to be handled by userfaultfd
-  char *region = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+  void *region = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (region == MAP_FAILED) {
     perror("mmap failed for region");

@@ -12,7 +12,7 @@ static inline long remap_page_table(struct expose_pgtbl_args *args) {
   long ret = syscall(__NR_remap_page_table, args);
   return ret;
 }
-void print_pagetable_page(char *addr);
+void print_pagetable_page(void *addr);
 
 #define PGD_SHIFT 39
 #define PUD_SHIFT 30
