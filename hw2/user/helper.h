@@ -5,6 +5,7 @@
 #include <linux/expose_pgtbl.h>
 #include <unistd.h>
 
+
 #ifndef __NR_remap_page_table
 #define __NR_remap_page_table 451
 #endif
@@ -13,12 +14,6 @@
 #define __NR_walk_page_table 452
 #endif
 
-static inline long remap_page_table(struct expose_pgtbl_args *args) {
-  long ret = syscall(__NR_remap_page_table, args);
-  return ret;
-}
-void print_pagetable_page(void *addr);
-
 #define PGD_SHIFT 39
 #define PUD_SHIFT 30
 #define PMD_SHIFT 21
@@ -26,6 +21,7 @@ void print_pagetable_page(void *addr);
 #define PAGE_SIZE (1UL << PAGE_SHIFT)
 #define NUM_ENTRIES (1UL << (PAGE_SHIFT - 3))
 #define BIT_MASK ((1UL << 9) - 1) // 9 bits for indexing (512 entries)
+#define PHYS_ADDR_MASK (0x0000FFFFFFFFF000UL)
 
 // Page table levels
 #define LEVEL_PGD 0
@@ -63,5 +59,30 @@ typedef struct {
   void **entry;         // Address of the missing or leaf page table entry
   unsigned long pa;     // Valid if status == PT_RESOLVE_OK
 } VaToPaResult;
+
+struct mapped_page {
+  unsigned long pfn;
+  unsigned long vaddr;
+  struct mapped_page *next;
+};
+
+struct mapped_page_list {
+  //maintain a list for each level of page table that has been mapped
+  struct mapped_page *pgdpage;
+  struct mapped_page *pudpage;
+  struct mapped_page *pmdpage;
+  struct mapped_page *ptepage;
+};
+
+
+static inline long remap_page_table(struct expose_pgtbl_args *args) {
+  long ret = syscall(__NR_remap_page_table, args);
+  return ret;
+}
+void print_pagetable_page(void *addr);
+
+void cleanup_mapped_page_list(struct mapped_page *head);
+
+int call_remap_page_table(struct expose_pgtbl_args *args, struct mapped_page_list *mapped_list);
 
 #endif

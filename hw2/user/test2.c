@@ -3,124 +3,16 @@
 #include "helper.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <asm-generic/unistd.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <errno.h>
-#include <string.h>
-#include <stdint.h>
 #include <sys/mman.h>
-#include <fcntl.h>
-#include <sys/types.h>
-
-#define PHYS_ADDR_MASK (0x0000FFFFFFFFF000UL)
-
-
-
-struct mapped_page {
-    unsigned long pfn;
-    unsigned long vaddr;
-    struct mapped_page *next;
-};
-
-struct mapped_page_list {
-    //maintain a list for each level of page table that has been mapped
-    struct mapped_page *pgdpage;
-    struct mapped_page *pudpage;
-    struct mapped_page *pmdpage;
-    struct mapped_page *ptepage;
-};
-
-
-int call_remap_page_table(struct expose_pgtbl_args *args, struct mapped_page_list *mapped_list) {
-    struct mapped_page **level_head_ptr;
-    struct mapped_page *current_node;
-    long ret;
-
-
-    // check cache
-    switch (args->level) {
-        case LEVEL_PGD: level_head_ptr = &mapped_list->pgdpage; break;
-        case LEVEL_PUD: level_head_ptr = &mapped_list->pudpage; break;
-        case LEVEL_PMD: level_head_ptr = &mapped_list->pmdpage; break;
-        case LEVEL_PTE: level_head_ptr = &mapped_list->ptepage; break;
-        default:
-            fprintf(stderr, "Invalid level: %d\n", args->level);
-            return -EINVAL;
-    }
-
-    current_node = *level_head_ptr;
-    while (current_node != NULL) {
-        if (current_node->pfn == args->pfn) {
-            args->remap_vaddr = current_node->vaddr;
-            args->pfn = current_node->pfn;
-            printf("Page already mapped at level %d, PFN: %lx\n", args->level, args->pfn);
-            return 0;
-        }
-        current_node = current_node->next;
-    }
-
-    printf("call_remap_page_table: No existing mapping for level %d PFN %lx. Creating new one.\n",
-        args->level, args->pfn);
-
-
-    // Call the remap_page_table syscall
-    unsigned long *ptr = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (ptr == MAP_FAILED) {
-        perror("mmap failed");
-        return -ENOMEM;
-    }
-    args->remap_vaddr = (unsigned long)ptr;
-
-    ret = remap_page_table(args);
-    if (ret < 0) {
-        perror("remap_page_table syscall failed");
-        return ret;
-    }
-    printf("call_remap_page_table: Mapped PFN %lx at level %d\n", args->pfn, args->level);
-
-
-
-
-    // update cache
-    struct mapped_page *new_node = malloc(sizeof(struct mapped_page));
-    if (new_node == NULL) {
-        perror("malloc failed");
-        return -ENOMEM;
-    }
-    new_node->pfn = args->pfn;
-    new_node->vaddr = args->remap_vaddr;
-    new_node->next = NULL;
-    if (*level_head_ptr == NULL) {
-        *level_head_ptr = new_node;
-    } else {
-        struct mapped_page *temp = *level_head_ptr;
-        while (temp->next != NULL) {
-            temp = temp->next;
-        }
-        temp->next = new_node;
-    }
-    return 0;
-}
-
-
-void cleanup_mapped_page_list(struct mapped_page *head) {
-    struct mapped_page *current = head;
-    struct mapped_page *next;
-    while (current != NULL) {
-        next = current->next;
-        printf("Cleaning up mapping: VA 0x%lx (PFN %lx)\n", current->vaddr, current->pfn);
-        free(current);
-        current = next;
-    }
-}
 
 
 unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, VaToPaResult *result) {
     struct expose_pgtbl_args *args = malloc(sizeof(struct expose_pgtbl_args));
     void *region = NULL;
-    uint64_t *pgtbl = NULL;
+    unsigned long *pgtbl = NULL;
     long ret;
     unsigned long pa = 0;
 
@@ -137,15 +29,18 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, V
 
         if (ret < 0) {
             perror("remap_page_table failed");
-            munmap(region, PAGE_SIZE);
-            free(args);
             result->status = PT_RESOLVE_ERROR;
             result->entry = NULL;
             result->pa = -1;
+            if (ret != -EINVAL) {
+                void *addr = (void *)args->remap_vaddr; 
+                munmap(addr, PAGE_SIZE);
+            }
+            free(args);
             return -EINVAL;
         }
 
-        pgtbl = (uint64_t *)args->remap_vaddr;
+        pgtbl = (unsigned long *)args->remap_vaddr;
         region = (void *)args->remap_vaddr;
 
         if (level == LEVEL_PGD) {
@@ -227,7 +122,7 @@ int main() {
     
     ret = syscall(__NR_walk_page_table, &args);
     if (ret < 0) {
-        printf("Syscall failed: %s\n", strerror(errno));
+        perror("walk_page_table syscall failed");
         free(ptr);
         return ret;
     }

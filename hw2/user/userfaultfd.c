@@ -22,30 +22,80 @@ struct handler_args {
   int uffd;
 };
 
-unsigned long va_to_pa(unsigned long va) {
+
+unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, VaToPaResult *result) {
   struct expose_pgtbl_args *args = malloc(sizeof(struct expose_pgtbl_args));
-  void *pgtbl_addr =
-      mmap(NULL, PAGE_SIZE, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  uint64_t *pgtbl = (uint64_t *)pgtbl_addr;
+  void *region = NULL;
+  unsigned long *pgtbl = NULL;
+  long ret;
+  unsigned long pa = 0;
+
   args->pid = getpid();
-  args->remap_vaddr = (unsigned long)pgtbl_addr;
+  args->remap_vaddr = (unsigned long)region;
+  args->pfn = -1; 
+  
+  for (int level = LEVEL_PGD; level <= LEVEL_PTE; level++) {
+      args->level = level;
+      args->remap_vaddr = (unsigned long)region;
+      
+      printf("va_to_pa: level %d, va: 0x%lx\n", level, va);
+      ret = call_remap_page_table(args, mapped_list);
 
-  int pgd_index = (va >> PGD_SHIFT) & BIT_MASK;
-  int pud_index = (va >> PUD_SHIFT) & BIT_MASK;
-  int pmd_index = (va >> PMD_SHIFT) & BIT_MASK;
-  int pte_index = (va >> PAGE_SHIFT) & BIT_MASK;
+      if (ret < 0) {
+          perror("remap_page_table failed");
+          result->status = PT_RESOLVE_ERROR;
+          result->entry = NULL;
+          result->pa = -1;
+          if (ret != -EINVAL) {
+              void *addr = (void *)args->remap_vaddr; 
+              munmap(addr, PAGE_SIZE);
+          }
+          free(args);
+          return -EINVAL;
+      }
 
-  // PGD
-  args->level = LEVEL_PGD;
-  args->pfn = -1; // handled by kernel
-  if (remap_page_table(args) < 0) {
-    perror("remap_page_table failed");
-    free(args);
-    return 0;
+      pgtbl = (unsigned long *)args->remap_vaddr;
+      region = (void *)args->remap_vaddr;
+
+      if (level == LEVEL_PGD) {
+          printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
+      }
+
+      unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
+      unsigned long index = (va >> index_shift) & BIT_MASK;
+      printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu (0x%lx)\n",
+            va, index_shift, BIT_MASK, index, index);
+
+
+      if (!(pgtbl[index] & 0x1)) {
+          printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
+          printf("va_to_pa: Invalid entry value: 0x%lx\n", pgtbl[index]);
+          munmap(region, PAGE_SIZE);
+          free(args);
+          result->status = PT_MISSING_PGD + level;
+          result->entry = (void **)&pgtbl[index];
+          result->pa = -1;
+          return 0;
+      }
+
+      unsigned long next_pfn = (pgtbl[index] & PHYS_ADDR_MASK) >> PAGE_SHIFT;
+      printf("va_to_pa: Extracted next PFN from entry: %lx\n", next_pfn);
+      
+      if (level == LEVEL_PTE) {
+          result->entry = (void **)&pgtbl[index];
+          pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
+          printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
+          break; 
+      } else {
+          args->pfn = next_pfn;
+      }
   }
-  uint64_t pgd_entry = pgtbl[pgd_index];
 
-  return 0;
+  munmap(region, PAGE_SIZE);
+  free(args);
+  result->status = PT_RESOLVE_OK;
+  result->pa = pa;
+  return pa;
 }
 
 void map_fault_va_to_pa(unsigned long va, unsigned long pte) { return; }
