@@ -15,15 +15,22 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-PGD *pgtbl_root;
-
 // Arguments for the fault handler thread
 struct handler_args {
   int uffd;
 };
 
+struct mapped_page_list* mapped_list;
 
-unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, VaToPaResult *result) {
+/*
+  va_to_pa: Converts a virtual address to a physical address using the cached page table
+  updates caches if the path is not cached already. 
+  @va : virtual address to convert
+  @mapped_list : structure containing cached page table pages 
+  @result : structure to store the result of the conversion
+  @return : physical address if successful, errno if failed
+*/
+unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
   struct expose_pgtbl_args *args = malloc(sizeof(struct expose_pgtbl_args));
   void *region = NULL;
   unsigned long *pgtbl = NULL;
@@ -31,74 +38,87 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, V
   unsigned long pa = 0;
 
   args->pid = getpid();
-  args->remap_vaddr = (unsigned long)region;
-  args->pfn = -1; 
-  
+
   for (int level = LEVEL_PGD; level <= LEVEL_PTE; level++) {
-      args->level = level;
-      args->remap_vaddr = (unsigned long)region;
-      
-      printf("va_to_pa: level %d, va: 0x%lx\n", level, va);
-      ret = call_remap_page_table(args, mapped_list);
+    args->level = level;
+    args->remap_vaddr = (unsigned long)region;
 
-      if (ret < 0) {
-          perror("remap_page_table failed");
-          result->status = PT_RESOLVE_ERROR;
-          result->entry = NULL;
-          result->pa = -1;
-          if (ret != -EINVAL) {
-              void *addr = (void *)args->remap_vaddr; 
-              munmap(addr, PAGE_SIZE);
-          }
-          free(args);
-          return -EINVAL;
-      }
+    printf("va_to_pa: level %d, va: 0x%lx\n", level, va);
+    ret = call_remap_page_table(args, mapped_list);
 
-      pgtbl = (unsigned long *)args->remap_vaddr;
-      region = (void *)args->remap_vaddr;
+    if (ret < 0) {
+      perror("remap_page_table failed");
+      result->status = PT_RESOLVE_ERROR;
+      result->entry = NULL;
+      free(args);
+      return ret;
+    }
 
-      if (level == LEVEL_PGD) {
-          printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
-      }
+    pgtbl = (unsigned long *)args->remap_vaddr;
+    region = (void *)args->remap_vaddr;
 
-      unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
-      unsigned long index = (va >> index_shift) & BIT_MASK;
-      printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu (0x%lx)\n",
-            va, index_shift, BIT_MASK, index, index);
+    if (level == LEVEL_PGD) {
+      printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
+    }
 
+    unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
+    unsigned long index = (va >> index_shift) & BIT_MASK;
+    printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
+           "(0x%lx)\n",
+           va, index_shift, BIT_MASK, index, index);
 
-      if (!(pgtbl[index] & 0x1)) {
-          printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
-          printf("va_to_pa: Invalid entry value: 0x%lx\n", pgtbl[index]);
-          munmap(region, PAGE_SIZE);
-          free(args);
-          result->status = PT_MISSING_PGD + level;
-          result->entry = (void **)&pgtbl[index];
-          result->pa = -1;
-          return 0;
-      }
+    if (!IS_VALID(pgtbl[index]) || (IS_VALID(pgtbl[index]) && !IS_PRESENT(pgtbl[index]))) {
+      // invalid or valid but not present
+      printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
+      printf("va_to_pa: Invalid entry value: 0x%lx\n", pgtbl[index]);
+      munmap(region, PAGE_SIZE);
+      free(args);
+      result->status = PT_MISSING_PGD + level;
+      result->entry = (void **)&pgtbl[index];
+      return -EINVAL;
+    } 
 
-      unsigned long next_pfn = (pgtbl[index] & PHYS_ADDR_MASK) >> PAGE_SHIFT;
-      printf("va_to_pa: Extracted next PFN from entry: %lx\n", next_pfn);
-      
-      if (level == LEVEL_PTE) {
-          result->entry = (void **)&pgtbl[index];
-          pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
-          printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
-          break; 
-      } else {
-          args->pfn = next_pfn;
-      }
+    unsigned long next_pfn = (pgtbl[index] & PHYS_ADDR_MASK) >> PAGE_SHIFT;
+    printf("va_to_pa: Extracted next PFN from entry: %lx\n", next_pfn);
+
+    if (level == LEVEL_PTE) {
+      result->entry = (void **)&pgtbl[index];
+      pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
+      printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
+    } else {
+      args->pfn = next_pfn;
+    }
   }
 
   munmap(region, PAGE_SIZE);
   free(args);
   result->status = PT_RESOLVE_OK;
-  result->pa = pa;
   return pa;
 }
 
-void map_fault_va_to_pa(unsigned long va, unsigned long pte) { return; }
+void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) { 
+  VaToPaResult* result = malloc(sizeof(VaToPaResult));
+  void** inval_pgtbl_entry = NULL;
+  while (1) {
+    va_to_pa(fault_va, result); // try walk the page
+    if (result->status == PT_RESOLVE_OK) { 
+      // reached pte and valid
+      free(result);
+      break;
+    }
+    inval_pgtbl_entry = result->entry;
+    unsigned long new_pgtbl_page_va = (unsigned long)mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    unsigned long pfn = va_to_pa(new_pgtbl_page_va, result) >> PAGE_SHIFT;
+    if (result->status != PT_RESOLVE_OK) {
+      perror("va_to_pa failed");
+      free(result);
+      return;
+    }
+    *inval_pgtbl_entry = (pfn << PAGE_SHIFT) | 0x3; // set present and writable bits
+  }
+  return; 
+}
 
 // Page fault handler thread
 static void *fault_handler(void *arg) {
@@ -121,10 +141,14 @@ static void *fault_handler(void *arg) {
 
     // Get fault address and page-aligned address
     unsigned long page_fault_addr = msg.arg.pagefault.address;
-    unsigned long fault_addr =
-        page_fault_addr & ~(PAGE_SIZE - 1); // lower 3 bytes to zeros
+    unsigned long fault_addr = page_fault_addr & ~(PAGE_SIZE - 1); // lower 3 bytes to zeros
 
-    printf("Page fault at address: %lx\n", page_fault_addr);
+    printf("Page fault at address: 0x%lx\n", fault_addr);
+
+    unsigned long new_pte = (unsigned long)mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+                                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+    map_fault_va_to_pa(fault_addr, new_pte);
 
     // Wake up the faulting thread
     struct uffdio_range ur = {
@@ -141,6 +165,8 @@ static void *fault_handler(void *arg) {
 }
 
 int main(int argc, char **argv) {
+  mapped_list = malloc(sizeof(struct mapped_page_list));
+
   int uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK);
   if (uffd < 0) {
     perror("userfaultfd failed");
@@ -185,13 +211,6 @@ int main(int argc, char **argv) {
 
   printf("Fault handler thread created\n");
 
-  pgtbl_root = (PGD *)malloc(sizeof(PGD));
-  if (pgtbl_root == NULL) {
-    perror("Failed to allocate memory for pgtbl_root");
-    return 1;
-  }
-  printf("Allocated memory for pgtbl_root\n");
-
   // Access pages to trigger faults
   for (size_t i = 0; i < 10 * PAGE_SIZE; i += PAGE_SIZE) {
     volatile char c = region[i]; // Read to trigger fault
@@ -214,6 +233,11 @@ int main(int argc, char **argv) {
 
   close(uffd);
   munmap(region, 10 * PAGE_SIZE);
+
+  cleanup_mapped_page_list(mapped_list->pgdpage);
+  cleanup_mapped_page_list(mapped_list->pudpage);
+  cleanup_mapped_page_list(mapped_list->pmdpage);
+  cleanup_mapped_page_list(mapped_list->ptepage);
 
   printf("Program completed successfully\n");
   return 0;

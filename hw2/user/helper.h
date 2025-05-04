@@ -1,10 +1,9 @@
 #ifndef HELPER_H
 #define HELPER_H
 
-#include <sys/types.h> 
 #include <linux/expose_pgtbl.h>
+#include <sys/types.h>
 #include <unistd.h>
-
 
 #ifndef __NR_remap_page_table
 #define __NR_remap_page_table 451
@@ -23,27 +22,14 @@
 #define BIT_MASK ((1UL << 9) - 1) // 9 bits for indexing (512 entries)
 #define PHYS_ADDR_MASK (0x0000FFFFFFFFF000UL)
 
+#define IS_VALID(x) ((x) & 0x1)
+#define IS_PRESENT(x) ((x) & 0x2)
+
 // Page table levels
 #define LEVEL_PGD 0
 #define LEVEL_PUD 1
 #define LEVEL_PMD 2
 #define LEVEL_PTE 3
-
-typedef struct pte {
-  unsigned long pte;
-} PTE;
-
-typedef struct pmd {
-  PTE *entries[NUM_ENTRIES];
-} PMD;
-
-typedef struct pud {
-  PMD *entries[NUM_ENTRIES];
-} PUD;
-
-typedef struct pgd {
-  PUD *entries[NUM_ENTRIES];
-} PGD;
 
 typedef enum {
   PT_RESOLVE_OK,
@@ -56,8 +42,7 @@ typedef enum {
 
 typedef struct {
   ResolveStatus status;
-  void **entry;         // Address of the missing or leaf page table entry
-  unsigned long pa;     // Valid if status == PT_RESOLVE_OK
+  void **entry;     // Address of the missing or leaf page table entry
 } VaToPaResult;
 
 struct mapped_page {
@@ -67,22 +52,23 @@ struct mapped_page {
 };
 
 struct mapped_page_list {
-  //maintain a list for each level of page table that has been mapped
+  // maintain a list for each level of page table that has been mapped
   struct mapped_page *pgdpage;
   struct mapped_page *pudpage;
   struct mapped_page *pmdpage;
   struct mapped_page *ptepage;
 };
 
-
 static inline long remap_page_table(struct expose_pgtbl_args *args) {
   long ret = syscall(__NR_remap_page_table, args);
   return ret;
 }
+
 void print_pagetable_page(void *addr);
 
 void cleanup_mapped_page_list(struct mapped_page *head);
 
-int call_remap_page_table(struct expose_pgtbl_args *args, struct mapped_page_list *mapped_list);
+int call_remap_page_table(struct expose_pgtbl_args *args,
+                          struct mapped_page_list *mapped_list);
 
 #endif
