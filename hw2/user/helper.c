@@ -90,6 +90,8 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     perror("mmap failed");
     return -ENOMEM;
   }
+  args->remap_vaddr = (unsigned long)ptr;
+  printf("call_remap_page_table: remap_page_table(pfn=%lx, level=%d, vaddr=%lx)\n", args->pfn, args->level, args->remap_vaddr);
   ret = remap_page_table(args);
   if (ret < 0) {
     perror("remap_page_table syscall failed");
@@ -97,7 +99,6 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     return ret;
   }
 
-  args->remap_vaddr = (unsigned long)ptr;
   printf("call_remap_page_table: Mapped PFN %lx at level %d\n", args->pfn, args->level);
 
   // update cache

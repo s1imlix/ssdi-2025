@@ -32,17 +32,17 @@
 #define LEVEL_PTE 3
 
 typedef enum {
-  PT_RESOLVE_OK,
   PT_MISSING_PGD,
   PT_MISSING_PUD,
   PT_MISSING_PMD,
   PT_MISSING_PTE,
+  PT_RESOLVE_OK,
   PT_RESOLVE_ERROR
 } ResolveStatus;
 
 typedef struct {
   ResolveStatus status;
-  void **entry;     // Address of the missing or leaf page table entry
+  void *entry;     // Address of the missing or leaf page table entry
 } VaToPaResult;
 
 struct mapped_page {

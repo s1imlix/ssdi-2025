@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/expose_pgtbl.h>
+#include <linux/userfaultfd.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -21,6 +22,9 @@ struct handler_args {
 };
 
 struct mapped_page_list* mapped_list;
+VaToPaResult* result;
+unsigned long pgd_pfn = -1;
+
 
 /*
   va_to_pa: Converts a virtual address to a physical address using the cached page table
@@ -30,7 +34,7 @@ struct mapped_page_list* mapped_list;
   @result : structure to store the result of the conversion
   @return : physical address if successful, errno if failed
 */
-unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
+unsigned long va_to_pa(unsigned long va) {
   struct expose_pgtbl_args *args = malloc(sizeof(struct expose_pgtbl_args));
   void *region = NULL;
   unsigned long *pgtbl = NULL;
@@ -38,6 +42,7 @@ unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
   unsigned long pa = 0;
 
   args->pid = getpid();
+  args->pfn = pgd_pfn;
 
   for (int level = LEVEL_PGD; level <= LEVEL_PTE; level++) {
     args->level = level;
@@ -58,15 +63,18 @@ unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
     region = (void *)args->remap_vaddr;
 
     if (level == LEVEL_PGD) {
-      printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
+      // printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
+      if (pgd_pfn == -1) {
+        pgd_pfn = args->pfn;
+      }
     }
 
     unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
     unsigned long index = (va >> index_shift) & BIT_MASK;
-    printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
-           "(0x%lx)\n",
-           va, index_shift, BIT_MASK, index, index);
-
+    //printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
+    //       "(0x%lx)\n",
+    //      va, index_shift, BIT_MASK, index, index);
+    printf("va_to_pa: pgtbl[%lu] = 0x%lx\n", index, pgtbl[index]);
     if (!IS_VALID(pgtbl[index]) || (IS_VALID(pgtbl[index]) && !IS_PRESENT(pgtbl[index]))) {
       // invalid or valid but not present
       printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
@@ -74,7 +82,7 @@ unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
       munmap(region, PAGE_SIZE);
       free(args);
       result->status = PT_MISSING_PGD + level;
-      result->entry = (void **)&pgtbl[index];
+      result->entry = (void *)&pgtbl[index];
       return -EINVAL;
     } 
 
@@ -82,7 +90,7 @@ unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
     printf("va_to_pa: Extracted next PFN from entry: %lx\n", next_pfn);
 
     if (level == LEVEL_PTE) {
-      result->entry = (void **)&pgtbl[index];
+      result->entry = (void *)&pgtbl[index];
       pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
       printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
     } else {
@@ -97,22 +105,24 @@ unsigned long va_to_pa(unsigned long va, VaToPaResult *result) {
 }
 
 void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) { 
-  VaToPaResult* result = malloc(sizeof(VaToPaResult));
-  void** inval_pgtbl_entry = NULL;
+  unsigned long* inval_pgtbl_entry = NULL;
+  void* new_pgtbl_page_va = 0;
   while (1) {
-    va_to_pa(fault_va, result); // try walk the page
+    va_to_pa(fault_va); // try walk the page
     if (result->status == PT_RESOLVE_OK) { 
       // reached pte and valid
-      free(result);
       break;
     }
-    inval_pgtbl_entry = result->entry;
-    unsigned long new_pgtbl_page_va = (unsigned long)mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    unsigned long pfn = va_to_pa(new_pgtbl_page_va, result) >> PAGE_SHIFT;
+    printf("map_fault_va_to_pa: Faulting at level %d, va: 0x%lx\n", result->status, fault_va);
+    inval_pgtbl_entry = (unsigned long*)result->entry;
+    new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+                                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+    mlock(new_pgtbl_page_va, PAGE_SIZE); // lock the page so it must be in memory
+    printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
+    unsigned long pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
-      perror("va_to_pa failed");
-      free(result);
+      perror("va_to_pa failed to find new page table page");
+      munmap(new_pgtbl_page_va, PAGE_SIZE);
       return;
     }
     *inval_pgtbl_entry = (pfn << PAGE_SHIFT) | 0x3; // set present and writable bits
@@ -166,6 +176,7 @@ static void *fault_handler(void *arg) {
 
 int main(int argc, char **argv) {
   mapped_list = malloc(sizeof(struct mapped_page_list));
+  result = malloc(sizeof(VaToPaResult));
 
   int uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK);
   if (uffd < 0) {
@@ -238,6 +249,8 @@ int main(int argc, char **argv) {
   cleanup_mapped_page_list(mapped_list->pudpage);
   cleanup_mapped_page_list(mapped_list->pmdpage);
   cleanup_mapped_page_list(mapped_list->ptepage);
+  free(mapped_list);
+  free(result);
 
   printf("Program completed successfully\n");
   return 0;

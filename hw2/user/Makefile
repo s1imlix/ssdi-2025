@@ -14,7 +14,7 @@ SRC_COMMON := helper.c
 OBJ_1 := $(SRC_1:.c=.o) $(SRC_COMMON:.c=.o) 
 OBJ_2 := $(SRC_2:.c=.o) $(SRC_COMMON:.c=.o) 
 
-all: $(TARGET_2) 
+all: $(TARGET_1) $(TARGET_2) 
 
 $(TARGET_1): $(OBJ_1)
 	$(CROSS)gcc -o $@ $^ $(EXTRA_CFLAGS) 
