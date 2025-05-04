@@ -13,18 +13,9 @@
 #include <fcntl.h>
 #include <sys/types.h>
 
-
-#define PAGE_SHIFT 12
-#define PAGE_SIZE (1UL << PAGE_SHIFT)
-#define BIT_MASK ((1UL << 9) - 1)    // 9 bits for indexing (512 entries)
-
 #define PHYS_ADDR_MASK (0x0000FFFFFFFFF000UL)
 
-// Page table levels
-#define LEVEL_PGD 0
-#define LEVEL_PUD 1
-#define LEVEL_PMD 2
-#define LEVEL_PTE 3
+
 
 struct mapped_page {
     unsigned long pfn;
@@ -78,7 +69,7 @@ int call_remap_page_table(struct expose_pgtbl_args *args, struct mapped_page_lis
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
         perror("mmap failed");
-        return -1;
+        return -ENOMEM;
     }
     args->remap_vaddr = (unsigned long)ptr;
 
@@ -110,8 +101,6 @@ int call_remap_page_table(struct expose_pgtbl_args *args, struct mapped_page_lis
         }
         temp->next = new_node;
     }
-
-
     return 0;
 }
 
@@ -128,7 +117,7 @@ void cleanup_mapped_page_list(struct mapped_page *head) {
 }
 
 
-unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
+unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list, VaToPaResult *result) {
     struct expose_pgtbl_args *args = malloc(sizeof(struct expose_pgtbl_args));
     void *region = NULL;
     uint64_t *pgtbl = NULL;
@@ -143,7 +132,6 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
         args->level = level;
         args->remap_vaddr = (unsigned long)region;
         
-        
         printf("va_to_pa: level %d, va: 0x%lx\n", level, va);
         ret = call_remap_page_table(args, mapped_list);
 
@@ -151,7 +139,10 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
             perror("remap_page_table failed");
             munmap(region, PAGE_SIZE);
             free(args);
-            return -22;
+            result->status = PT_RESOLVE_ERROR;
+            result->entry = NULL;
+            result->pa = -1;
+            return -EINVAL;
         }
 
         pgtbl = (uint64_t *)args->remap_vaddr;
@@ -161,18 +152,20 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
             printf("va_to_pa: Got PGD PFN: %lx\n", args->pfn);
         }
 
-
-        unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9; // Debug shift
+        unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
         unsigned long index = (va >> index_shift) & BIT_MASK;
         printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu (0x%lx)\n",
               va, index_shift, BIT_MASK, index, index);
 
-        printf("va_to_pa: Page table entry at index %lu: 0x%lx\n", index, pgtbl[index]);
 
         if (!(pgtbl[index] & 0x1)) {
-            printf("va_to_pa: Entry not present at level %d, index %lu\n", level, index);
+            printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
+            printf("va_to_pa: Invalid entry value: 0x%lx\n", pgtbl[index]);
             munmap(region, PAGE_SIZE);
             free(args);
+            result->status = PT_MISSING_PGD + level;
+            result->entry = (void **)&pgtbl[index];
+            result->pa = -1;
             return 0;
         }
 
@@ -180,6 +173,7 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
         printf("va_to_pa: Extracted next PFN from entry: %lx\n", next_pfn);
         
         if (level == LEVEL_PTE) {
+            result->entry = (void **)&pgtbl[index];
             pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
             printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
             break; 
@@ -190,8 +184,9 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
 
     munmap(region, PAGE_SIZE);
     free(args);
+    result->status = PT_RESOLVE_OK;
+    result->pa = pa;
     return pa;
-
 }
 
 
@@ -201,6 +196,7 @@ unsigned long va_to_pa(unsigned long va, struct mapped_page_list *mapped_list) {
 int main() {
     struct walk_page_args args;
     int ret;
+    VaToPaResult *result = malloc(sizeof(VaToPaResult));
 
     // initialize the mapping page list
     struct mapped_page_list *mapped_list = malloc(sizeof(struct mapped_page_list));
@@ -216,7 +212,7 @@ int main() {
     if (ptr == MAP_FAILED) {
         perror("mmap failed");
         free(mapped_list);
-        return 1;
+        return -ENOMEM;
     }
 
    
@@ -227,23 +223,23 @@ int main() {
     args.paddr = 0;
 
     
-
     printf("[KERNELSPACE] Testing page table walk for address: %p\n", ptr);
     
     ret = syscall(__NR_walk_page_table, &args);
     if (ret < 0) {
         printf("Syscall failed: %s\n", strerror(errno));
         free(ptr);
-        return 1;
+        return ret;
     }
 
     printf("[KERNELSPACE] Virtual address:  0x%lx, Physical address: 0x%lx\n", args.vaddr, args.paddr);
     
-    unsigned long pa = va_to_pa(args.vaddr, mapped_list);
-    if (pa == 0) {
-        printf("va_to_pa failed\n");
-        return 1;
+    unsigned long pa = va_to_pa(args.vaddr, mapped_list, result);
+    if (result->status != PT_RESOLVE_OK) {
+        printf("va_to_pa failed with status: %d\n", result->status);
+        return -EINVAL;
     }
+    
     printf("[USERSPACE] Virtual address:  0x%lx, Physical address: 0x%lx\n", args.vaddr, pa);
 
 
@@ -258,6 +254,7 @@ int main() {
     cleanup_mapped_page_list(mapped_list->pmdpage);
     cleanup_mapped_page_list(mapped_list->ptepage);
     free(mapped_list);
+    free(result);
 
     return 0;
 }
