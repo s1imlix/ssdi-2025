@@ -19,6 +19,7 @@ void print_pagetable_page(void *addr);
 #define PMD_SHIFT 21
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1UL << PAGE_SHIFT)
+#define NUM_ENTRIES (1UL << (PAGE_SHIFT - 3))
 #define BIT_MASK ((1UL << 9) - 1) // 9 bits for indexing (512 entries)
 
 // Page table levels
@@ -26,5 +27,21 @@ void print_pagetable_page(void *addr);
 #define LEVEL_PUD 1
 #define LEVEL_PMD 2
 #define LEVEL_PTE 3
+
+typedef struct pte {
+  unsigned long pte;
+} PTE;
+
+typedef struct pmd {
+  PTE *entries[NUM_ENTRIES];
+} PMD;
+
+typedef struct pud {
+  PMD *entries[NUM_ENTRIES];
+} PUD;
+
+typedef struct pgd {
+  PUD *entries[NUM_ENTRIES];
+} PGD;
 
 #endif

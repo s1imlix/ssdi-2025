@@ -15,6 +15,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+PGD *pgtbl_root;
+
 // Arguments for the fault handler thread
 struct handler_args {
   int uffd;
@@ -69,9 +71,10 @@ static void *fault_handler(void *arg) {
 
     // Get fault address and page-aligned address
     unsigned long page_fault_addr = msg.arg.pagefault.address;
-    unsigned long fault_addr = page_fault_addr & ~(PAGE_SIZE - 1);
+    unsigned long fault_addr =
+        page_fault_addr & ~(PAGE_SIZE - 1); // lower 3 bytes to zeros
 
-    // TODO
+    printf("Page fault at address: %lx\n", page_fault_addr);
 
     // Wake up the faulting thread
     struct uffdio_range ur = {
@@ -131,6 +134,13 @@ int main(int argc, char **argv) {
   }
 
   printf("Fault handler thread created\n");
+
+  pgtbl_root = (PGD *)malloc(sizeof(PGD));
+  if (pgtbl_root == NULL) {
+    perror("Failed to allocate memory for pgtbl_root");
+    return 1;
+  }
+  printf("Allocated memory for pgtbl_root\n");
 
   // Access pages to trigger faults
   for (size_t i = 0; i < 10 * PAGE_SIZE; i += PAGE_SIZE) {
