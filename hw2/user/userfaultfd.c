@@ -71,9 +71,10 @@ unsigned long va_to_pa(unsigned long va) {
 
     unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
     unsigned long index = (va >> index_shift) & BIT_MASK;
-    //printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
-    //       "(0x%lx)\n",
-    //      va, index_shift, BIT_MASK, index, index);
+    printf("pgtbl: 0x%lx\n", (unsigned long)pgtbl);
+    printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
+           "(0x%lx)\n",
+          va, index_shift, BIT_MASK, index, index);
     printf("va_to_pa: pgtbl[%lu] = 0x%lx\n", index, pgtbl[index]);
     if (!IS_VALID(pgtbl[index]) || (IS_VALID(pgtbl[index]) && !IS_PRESENT(pgtbl[index]))) {
       // invalid or valid but not present
@@ -113,15 +114,21 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
       // reached pte and valid
       break;
     }
+
     printf("map_fault_va_to_pa: Faulting at level %d, va: 0x%lx\n", result->status, fault_va);
     inval_pgtbl_entry = (unsigned long*)result->entry;
-    new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    volatile char c = *(char*)new_pgtbl_page_va; // touch the page
+
+    if (result->status != PT_MISSING_PTE) {
+      new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+      memset(new_pgtbl_page_va, 0, PAGE_SIZE); // touch the page                          
+    } else {
+      new_pgtbl_page_va = (void*)pte;
+    }
+
     printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
     unsigned long pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
-      perror("va_to_pa failed to find new page table page");
       munmap(new_pgtbl_page_va, PAGE_SIZE);
       return;
     }
@@ -153,12 +160,20 @@ static void *fault_handler(void *arg) {
     unsigned long page_fault_addr = msg.arg.pagefault.address;
     unsigned long fault_addr = page_fault_addr & ~(PAGE_SIZE - 1); // lower 3 bytes to zeros
 
-    printf("Page fault at address: 0x%lx\n", fault_addr);
-
-    unsigned long new_pte = (unsigned long)mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-    map_fault_va_to_pa(fault_addr, new_pte);
+    printf("======= Page fault at address: 0x%lx =======\n", fault_addr);
+    void* new_pte_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+    memset(new_pte_va, 0, PAGE_SIZE); // touch the page
+    printf("handler: New page table page allocated at va=0x%lx -> pa: ?\n", (unsigned long)new_pte_va);
+    unsigned long new_pte = va_to_pa((unsigned long)new_pte_va) >> PAGE_SHIFT;
+    if (result->status != PT_RESOLVE_OK) {
+      printf("handler: va_to_pa failed to find new page at va=0x%lx\n", (unsigned long)new_pte_va);
+      munmap(new_pte_va, PAGE_SIZE);
+    } else {
+      printf("handler: va=0x%lx -> pa=0x%lx, start handling 0x%lx\n", (unsigned long)new_pte_va, new_pte, fault_addr);
+      map_fault_va_to_pa(fault_addr, new_pte);
+    }
+    
 
     // Wake up the faulting thread
     struct uffdio_range ur = {

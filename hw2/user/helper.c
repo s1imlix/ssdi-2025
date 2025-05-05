@@ -73,15 +73,15 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     if (current_node->pfn == args->pfn) {
       args->remap_vaddr = current_node->vaddr;
       args->pfn = current_node->pfn;
-      printf("Page already mapped at level %d, PFN: %lx\n", args->level, current_node->pfn);
+      // printf("Page already mapped at level %d, PFN: %lx\n", args->level, current_node->pfn);
       return 0;
     }
     current_node = current_node->next;
   }
 
-  printf("call_remap_page_table: No existing mapping for level %d PFN %lx. "
-         "Creating new one.\n",
-         args->level, args->pfn);
+  // printf("call_remap_page_table: No existing mapping for level %d PFN %lx. "
+  //         "Creating new one.\n",
+  //         args->level, args->pfn);
 
   // Call the remap_page_table syscall
   unsigned long *ptr = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
@@ -91,7 +91,7 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     return -ENOMEM;
   }
   args->remap_vaddr = (unsigned long)ptr;
-  printf("call_remap_page_table: remap_page_table(pfn=%lx, level=%d, vaddr=%lx)\n", args->pfn, args->level, args->remap_vaddr);
+  // printf("call_remap_page_table: remap_page_table(pfn=%lx, level=%d, vaddr=%lx)\n", args->pfn, args->level, args->remap_vaddr);
   ret = remap_page_table(args);
   if (ret < 0) {
     perror("remap_page_table syscall failed");
@@ -99,7 +99,7 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     return ret;
   }
 
-  printf("call_remap_page_table: Mapped PFN %lx at level %d\n", args->pfn, args->level);
+  // printf("call_remap_page_table: Mapped PFN %lx at level %d\n", args->pfn, args->level);
 
   // update cache
   struct mapped_page *new_node = malloc(sizeof(struct mapped_page));
