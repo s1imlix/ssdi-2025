@@ -116,8 +116,8 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
     printf("map_fault_va_to_pa: Faulting at level %d, va: 0x%lx\n", result->status, fault_va);
     inval_pgtbl_entry = (unsigned long*)result->entry;
     new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-    mlock(new_pgtbl_page_va, PAGE_SIZE); // lock the page so it must be in memory
+                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    volatile char c = *(char*)new_pgtbl_page_va; // touch the page
     printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
     unsigned long pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
