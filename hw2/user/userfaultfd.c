@@ -71,7 +71,6 @@ unsigned long va_to_pa(unsigned long va) {
 
     unsigned long index_shift = PAGE_SHIFT + (3 - level) * 9;
     unsigned long index = (va >> index_shift) & BIT_MASK;
-    printf("pgtbl: 0x%lx\n", (unsigned long)pgtbl);
     printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
            "(0x%lx)\n",
           va, index_shift, BIT_MASK, index, index);
@@ -80,10 +79,10 @@ unsigned long va_to_pa(unsigned long va) {
       // invalid or valid but not present
       printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
       printf("va_to_pa: Invalid entry value: 0x%lx\n", pgtbl[index]);
-      munmap(region, PAGE_SIZE);
       free(args);
       result->status = PT_MISSING_PGD + level;
       result->entry = (void *)&pgtbl[index];
+      printf("va_to_pa: Invalid entry location: 0x%lx\n", (void *)&pgtbl[index]);
       return -EINVAL;
     } 
 
@@ -99,7 +98,6 @@ unsigned long va_to_pa(unsigned long va) {
     }
   }
 
-  munmap(region, PAGE_SIZE);
   free(args);
   result->status = PT_RESOLVE_OK;
   return pa;
@@ -108,7 +106,10 @@ unsigned long va_to_pa(unsigned long va) {
 void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) { 
   unsigned long* inval_pgtbl_entry = NULL;
   void* new_pgtbl_page_va = 0;
-  while (1) {
+  unsigned long pfn = 0;
+  int total_walk = 0;
+
+  while (total_walk < LEVEL_PTE) {
     va_to_pa(fault_va); // try walk the page
     if (result->status == PT_RESOLVE_OK) { 
       // reached pte and valid
@@ -121,18 +122,20 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
     if (result->status != PT_MISSING_PTE) {
       new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-      memset(new_pgtbl_page_va, 0, PAGE_SIZE); // touch the page                          
+      memset(new_pgtbl_page_va, 0, PAGE_SIZE); // touch the page   
+      printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
+      pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;                       
     } else {
-      new_pgtbl_page_va = (void*)pte;
+      printf("map_fault_va_to_pa: Reached PTE, overwriting 0x%lx with provided pte=0x%lx\n", inval_pgtbl_entry, pte);
+      pfn = pte;
     }
 
-    printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
-    unsigned long pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
       munmap(new_pgtbl_page_va, PAGE_SIZE);
       return;
     }
     *inval_pgtbl_entry = (pfn << PAGE_SHIFT) | 0x3; // set present and writable bits
+    total_walk++;
   }
   return; 
 }
