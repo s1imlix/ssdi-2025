@@ -121,20 +121,23 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
 
     if (result->status != PT_MISSING_PTE) {
       new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+                               MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
       memset(new_pgtbl_page_va, 0, PAGE_SIZE); // touch the page   
       printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
-      pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;                       
+      pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
+      if (result->status != PT_RESOLVE_OK) {
+        printf("map_fault_va_to_pa: va_to_pa failed to find new page at va=0x%lx\n", (unsigned long)new_pgtbl_page_va);  
+        munmap(new_pgtbl_page_va, PAGE_SIZE);
+        return;
+      }                       
     } else {
       printf("map_fault_va_to_pa: Reached PTE, overwriting 0x%lx with provided pte=0x%lx\n", inval_pgtbl_entry, pte);
       pfn = pte;
     }
 
-    if (result->status != PT_RESOLVE_OK) {
-      munmap(new_pgtbl_page_va, PAGE_SIZE);
-      return;
-    }
+    printf("map_fault_va_to_pa: Before update, pgtbl entry at 0x%lx = 0x%lx\n", (unsigned long)inval_pgtbl_entry, *inval_pgtbl_entry);
     *inval_pgtbl_entry = (pfn << PAGE_SHIFT) | 0x3; // set present and writable bits
+    printf("map_fault_va_to_pa: After update, pgtbl entry at 0x%lx = 0x%lx\n", (unsigned long)inval_pgtbl_entry, *inval_pgtbl_entry);
     total_walk++;
   }
   return; 

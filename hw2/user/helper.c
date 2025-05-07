@@ -85,7 +85,7 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
 
   // Call the remap_page_table syscall
   unsigned long *ptr = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                            MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (ptr == MAP_FAILED) {
     perror("mmap failed");
     return -ENOMEM;
