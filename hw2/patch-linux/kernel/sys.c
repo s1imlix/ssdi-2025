@@ -2834,7 +2834,7 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 	if (pfn_valid(args->pfn) == 0)
 		return -EINVAL;
 
-	mmap_read_lock(mm);
+	mmap_write_lock(mm);
 	vma = find_vma(mm, args->remap_vaddr);
 	printk(KERN_INFO "vma before split: [%lx, %lx]\n", vma->vm_start,
 	       vma->vm_end);
@@ -2844,12 +2844,10 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 	       vma->vm_end);
 
 	if (!vma) {
-		mmap_read_unlock(mm);
+		mmap_write_unlock(mm);
 		return -EINVAL;
 	}
-	mmap_read_unlock(mm);
 
-	mmap_write_lock(mm);
 	printk(KERN_INFO "remap_page_table: mapping pfn=%lld to [%lx, %lx]\n",
 	       args->pfn, vma->vm_start, vma->vm_end);
 	ret = remap_pfn_range(vma, args->remap_vaddr, args->pfn, 4096,
