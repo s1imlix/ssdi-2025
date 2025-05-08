@@ -25,6 +25,9 @@ struct mapped_page_list* mapped_list;
 VaToPaResult* result;
 unsigned long pgd_pfn = -1;
 
+#define NUM_TEST_PAGES 20 // set more so i don't have to handle stupid issues
+int mapped_pte_cnt = 0;
+unsigned long mapped_pte_entries[NUM_TEST_PAGES] = {0}; // cleanup before exit_mmap
 
 /*
   va_to_pa: Converts a virtual address to a physical address using the cached page table
@@ -103,16 +106,21 @@ unsigned long va_to_pa(unsigned long va) {
   return pa;
 }
 
-void clean_pte(unsigned long va) {
-  // clean the pte entry at va, va must be mmap-allocated
-  va_to_pa(va); // try walk the page
-  if (result->status != PT_RESOLVE_OK) {
-    printf("clean_pte: va_to_pa failed to find page at va=0x%lx\n", va);
-    return;
+void clean_pte() {
+  printf("Performing all overwritten %d pte cleanup\n", mapped_pte_cnt);
+  // clean ALL pte entries we modified BEFORE mmap cleanup
+  for (int i = 0; i < mapped_pte_cnt; i++) {
+    printf("clean_pte: mapped_pte_entries[%d] = 0x%lx\n", i, mapped_pte_entries[i]);
+    unsigned long va = mapped_pte_entries[i];
+    va_to_pa(va); // try walk the page
+    if (result->status != PT_RESOLVE_OK) {
+      printf("clean_pte: va_to_pa failed to find page at va=0x%lx\n", va);
+      return;
+    }
+    printf("cleaning up pte at va=0x%lx\n", va);
+    unsigned long* pte = (unsigned long*)result->entry;
+    *pte = 0; 
   }
-  printf("cleaning up pte at va=0x%lx\n", va);
-  unsigned long* pte = (unsigned long*)result->entry;
-  *pte = 0UL;
 }
 
 void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) { 
@@ -153,6 +161,7 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
     *inval_pgtbl_entry = entry_value;
     total_walk++;
   }
+  *(volatile char*)fault_va = 0; 
   return; 
 }
 
@@ -186,18 +195,17 @@ static void *fault_handler(void *arg) {
     printf("======= Page fault at address: 0x%lx =======\n", fault_addr);
     void* new_pte_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
                             MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-    // memset(new_pte_va, 0, PAGE_SIZE); // touch the page
-    // printf("handler: New page table page allocated at va=0x%lx -> pa: ?\n", (unsigned long)new_pte_va);
+    mapped_pte_entries[mapped_pte_cnt++] = new_pte_va;
     unsigned long new_pte = va_to_pa((unsigned long)new_pte_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
       printf("handler: va_to_pa failed to find new page at va=0x%lx\n", (unsigned long)new_pte_va);
       munmap(new_pte_va, PAGE_SIZE);
     } else {
       printf("handler: va=0x%lx -> pa=0x%lx, start handling 0x%lx\n", (unsigned long)new_pte_va, new_pte, fault_addr);
-      clean_pte((unsigned long)new_pte_va); // clean the pte entry at va to avoid double mapping
       map_fault_va_to_pa(fault_addr, new_pte);
     }
     
+    printf("handler: Mapped fault address 0x%lx to new page table page 0x%lx, waking up\n", fault_addr, new_pte);
     
     // Wake up the faulting thread
     struct uffdio_range ur = {
@@ -205,13 +213,9 @@ static void *fault_handler(void *arg) {
         .len = PAGE_SIZE,
     };
 
-    printf("handler: Mapped fault address 0x%lx to new page table page 0x%lx, waking up\n", fault_addr, new_pte);
-
     if (ioctl(h->uffd, UFFDIO_WAKE, &ur) == -1) {
       perror("ioctl(UFFDIO_WAKE) failed");
     }
-
-    printf("handler: Woke up the faulting thread\n");
   }
 
   return NULL;
@@ -267,7 +271,7 @@ int main(int argc, char **argv) {
 
   // Access pages to trigger faults
   for (size_t i = 0; i < 10 * PAGE_SIZE; i += PAGE_SIZE) {
-    printf("Accessing page %zu\n", i / PAGE_SIZE);
+
     volatile char c = region[i]; // Read to trigger fault
     printf("Page %zu: First byte was %c\n", i / PAGE_SIZE, c);
 
@@ -288,6 +292,7 @@ int main(int argc, char **argv) {
 
   close(uffd);
   munmap(region, 10 * PAGE_SIZE);
+  clean_pte();
 
   cleanup_mapped_page_list(mapped_list->pgdpage);
   cleanup_mapped_page_list(mapped_list->pudpage);
