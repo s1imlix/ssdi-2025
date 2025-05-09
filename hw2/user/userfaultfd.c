@@ -136,7 +136,7 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
   unsigned long* inval_pgtbl_entry = NULL;
   unsigned long entry_value = 0;
   void* new_pgtbl_page_va = 0;
-  unsigned long pfn = 0;
+  unsigned long pa = 0;
 
   while (1) {
     va_to_pa(fault_va); // try walk the page
@@ -148,17 +148,16 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
       new_pgtbl_page_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
                                MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
       memset(new_pgtbl_page_va, 0, PAGE_SIZE); // touch the page   
-      // printf("map_fault_va_to_pa: New page table page allocated at: 0x%lx\n", (unsigned long)new_pgtbl_page_va);
-      pfn = va_to_pa((unsigned long)new_pgtbl_page_va) >> PAGE_SHIFT;
+      pa = va_to_pa((unsigned long)new_pgtbl_page_va);
+      *inval_pgtbl_entry = 0;
       if (result->status != PT_RESOLVE_OK) {
-        // printf("map_fault_va_to_pa: va_to_pa failed to find new page at va=0x%lx\n", (unsigned long)new_pgtbl_page_va);  
         munmap(new_pgtbl_page_va, PAGE_SIZE);
         return;
       }   
-      entry_value = (pfn << PAGE_SHIFT) | 0xf43;  
+      entry_value = (pa & PHYS_ADDR_MASK) | 0x1UL; 
       *inval_pgtbl_entry = entry_value;           
     } else {
-      entry_value = (pte) | 0xe8000000000f43UL;
+      entry_value = (pte & PHYS_ADDR_MASK) | 0x1UL; 
       printf("map_fault_va_to_pa: Reached PTE, overwriting &pte=0x%lx with 0x%lx\n", (unsigned long)inval_pgtbl_entry, entry_value);
       *inval_pgtbl_entry = entry_value;
       printf("map_fault_va_to_pa: Overwritten entry value: 0x%lx\n", *inval_pgtbl_entry);
@@ -198,6 +197,7 @@ static void *fault_handler(void *arg) {
                             MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     memset(new_pte_va, 0, PAGE_SIZE); // touch the page   
     unsigned long new_pte = va_to_pa((unsigned long)new_pte_va);
+    *(unsigned long*)result->entry = 0;
     printf("handler: new_pte_va=0x%lx, new_pte=0x%lx\n", (unsigned long)new_pte_va, new_pte);
     va_test_list[va_test_cnt++] = (unsigned long)new_pte_va;
     if (result->status != PT_RESOLVE_OK) {
@@ -296,7 +296,6 @@ int main(int argc, char **argv) {
 
   close(uffd);
 
-  clean_va(0, pte_cleanup_list, pte_cleanup_cnt); // clean up modified pte
 
   if (munmap(region, 10 * PAGE_SIZE) == -1) {
     perror("munmap failed");

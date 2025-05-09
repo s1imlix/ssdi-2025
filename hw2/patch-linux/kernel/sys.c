@@ -2807,11 +2807,12 @@ SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
 	if (vaddr_not_aligned)
 		return -EINVAL;
 
-	task = find_task_by_vpid(args->pid);
+	task = pid_task(find_get_pid(args->pid), PIDTYPE_PID);
 	if (task == NULL)
 		return -EINVAL;
-
-	mm = task->mm;
+	mm = get_task_mm(task);
+	if (mm == NULL)
+		return -EINVAL;
 
 	if (args->level == 0) {
 		pgd_t *pgd_va = mm->pgd;

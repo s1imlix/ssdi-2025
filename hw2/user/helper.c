@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <string.h>
 
 void print_pagetable_page(void *addr) {
   printf("=========================\n");
