@@ -26,8 +26,11 @@ VaToPaResult* result;
 unsigned long pgd_pfn = -1;
 
 #define NUM_TEST_PAGES 20 // set more so i don't have to handle stupid issues
-int mapped_pte_cnt = 0;
-unsigned long mapped_pte_entries[NUM_TEST_PAGES] = {0}; // cleanup before exit_mmap
+int va_cleanup_cnt = 0;
+int pte_cleanup_cnt = 0;
+unsigned long va_cleanup_list[NUM_TEST_PAGES] = {0}; // cleanup before exit_mmap
+unsigned long pte_cleanup_list[NUM_TEST_PAGES] = {0}; // cleanup before exit_mmap
+
 
 /*
   va_to_pa: Converts a virtual address to a physical address using the cached page table
@@ -77,7 +80,7 @@ unsigned long va_to_pa(unsigned long va) {
     //printf("va_to_pa: Calculating index: (va=0x%lx >> %lu) & 0x%lx = %lu "
     //       "(0x%lx)\n",
     //      va, index_shift, BIT_MASK, index, index);
-    printf("va_to_pa: pgtbl[%lu] = 0x%lx\n", index, pgtbl[index]);
+    // printf("va_to_pa: pgtbl[%lu] = 0x%lx\n", index, pgtbl[index]);
     if (!IS_VALID(pgtbl[index]) || (IS_VALID(pgtbl[index]) && !IS_PRESENT(pgtbl[index]))) {
       // invalid or valid but not present
       // printf("va_to_pa: Invalid entry at level %d, index %lu\n", level, index);
@@ -95,7 +98,7 @@ unsigned long va_to_pa(unsigned long va) {
     if (level == LEVEL_PTE) {
       result->entry = (void *)&pgtbl[index];
       pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
-      printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
+      // printf("va_to_pa: Final Physical address: 0x%lx\n", pa);
     } else {
       args->pfn = next_pfn;
     }
@@ -106,20 +109,25 @@ unsigned long va_to_pa(unsigned long va) {
   return pa;
 }
 
-void clean_pte() {
-  printf("Performing all overwritten %d pte cleanup\n", mapped_pte_cnt);
-  // clean ALL pte entries we modified BEFORE mmap cleanup
-  for (int i = 0; i < mapped_pte_cnt; i++) {
-    printf("clean_pte: mapped_pte_entries[%d] = 0x%lx\n", i, mapped_pte_entries[i]);
-    unsigned long va = mapped_pte_entries[i];
-    va_to_pa(va); // try walk the page
-    if (result->status != PT_RESOLVE_OK) {
-      printf("clean_pte: va_to_pa failed to find page at va=0x%lx\n", va);
-      return;
-    }
-    printf("cleaning up pte at va=0x%lx\n", va);
-    unsigned long* pte = (unsigned long*)result->entry;
-    *pte = 0; 
+// clean the pte entries at va_cleanup_list
+void clean_va(int is_mmap, unsigned long* va_list, int va_cnt) {
+  printf("Performing all overwritten %d pte cleanup\n", va_cnt);
+  for (int i = 0; i < va_cnt; i++) {
+    // printf("clean_pte: mapped_pte_entries[%d] = 0x%lx\n", i, mapped_pte_entries[i]);
+    unsigned long va = va_list[i];
+    if (is_mmap) {
+      // printf("clean_pte: va_cleanup_list[%d] = 0x%lx\n", i, va);
+      munmap((void*)va, PAGE_SIZE);
+    } else {
+      va_to_pa(va); // try walk the page
+      if (result->status != PT_RESOLVE_OK) {
+        printf("clean_pte: va_to_pa failed to find page at va=0x%lx\n", va);
+        return;
+      }
+      // printf("cleaning up pte at va=0x%lx\n", va);
+      unsigned long* pte = (unsigned long*)result->entry;
+      *pte = 0;
+    } 
   }
 }
 
@@ -134,11 +142,11 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
     va_to_pa(fault_va); // try walk the page
     if (result->status == PT_RESOLVE_OK) { 
       // reached pte and valid
-      printf("map_fault_va_to_pa: Reached PTE, va: 0x%lx\n", fault_va);
+      // printf("map_fault_va_to_pa: Reached PTE, va: 0x%lx\n", fault_va);
       break;
     }
 
-    printf("map_fault_va_to_pa: Faulting at level %d, va: 0x%lx\n", result->status, fault_va);
+    // printf("map_fault_va_to_pa: Faulting at level %d, va: 0x%lx\n", result->status, fault_va);
     inval_pgtbl_entry = (unsigned long*)result->entry;
 
     if (result->status != PT_MISSING_PTE) {
@@ -154,14 +162,15 @@ void map_fault_va_to_pa(unsigned long fault_va, unsigned long pte) {
       }   
       entry_value = (pfn << PAGE_SHIFT) | 0x3UL;                   
     } else {
-      printf("map_fault_va_to_pa: Reached PTE, overwriting 0x%lx with provided pte=0x%lx\n", inval_pgtbl_entry, pte);
+      printf("map_fault_va_to_pa: Reached PTE, overwriting &pte=0x%lx with provided pte=0x%lx\n", inval_pgtbl_entry, pte);
       entry_value = (pte << PAGE_SHIFT) | 0x3UL; 
+      pte_cleanup_list[pte_cleanup_cnt++] = fault_va;
     }
 
     *inval_pgtbl_entry = entry_value;
     total_walk++;
   }
-  *(volatile char*)fault_va = 0; 
+  *(volatile char*)fault_va = 0; // access to wake up main
   return; 
 }
 
@@ -195,7 +204,7 @@ static void *fault_handler(void *arg) {
     printf("======= Page fault at address: 0x%lx =======\n", fault_addr);
     void* new_pte_va = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
                             MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-    mapped_pte_entries[mapped_pte_cnt++] = new_pte_va;
+    va_cleanup_list[va_cleanup_cnt++] = new_pte_va; // we need to clean up these mapping later
     unsigned long new_pte = va_to_pa((unsigned long)new_pte_va) >> PAGE_SHIFT;
     if (result->status != PT_RESOLVE_OK) {
       printf("handler: va_to_pa failed to find new page at va=0x%lx\n", (unsigned long)new_pte_va);
@@ -292,7 +301,9 @@ int main(int argc, char **argv) {
 
   close(uffd);
   munmap(region, 10 * PAGE_SIZE);
-  clean_pte();
+  clean_va(0, va_cleanup_list, va_cleanup_cnt); // clean up self-allocated mmap, which already handles region cleanup.
+  // clean_va(0, pte_cleanup_list, pte_cleanup_cnt); // clean up modified pte
+
 
   cleanup_mapped_page_list(mapped_list->pgdpage);
   cleanup_mapped_page_list(mapped_list->pudpage);
