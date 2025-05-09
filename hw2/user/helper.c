@@ -74,15 +74,10 @@ int call_remap_page_table(struct expose_pgtbl_args *args,
     if (current_node->pfn == args->pfn) {
       args->remap_vaddr = current_node->vaddr;
       args->pfn = current_node->pfn;
-      // printf("Page already mapped at level %d, PFN: %lx\n", args->level, current_node->pfn);
       return 0;
     }
     current_node = current_node->next;
   }
-
-  // printf("call_remap_page_table: No existing mapping for level %d PFN %lx. "
-  //         "Creating new one.\n",
-  //         args->level, args->pfn);
 
   // Call the remap_page_table syscall
   unsigned long *ptr = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
