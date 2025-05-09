@@ -27,8 +27,8 @@ void cleanup_mapped_page_list(struct mapped_page *head) {
   struct mapped_page *next;
   while (current != NULL) {
     next = current->next;
-    printf("Cleaning up mapping: VA 0x%lx (PFN %lx)\n", current->vaddr,
-           current->pfn);
+    munmap((void*)current->vaddr, PAGE_SIZE);
+    printf("Cleaning up mapping: VA 0x%lx (PFN %lx)\n", current->vaddr, current->pfn);
     free(current);
     current = next;
   }
