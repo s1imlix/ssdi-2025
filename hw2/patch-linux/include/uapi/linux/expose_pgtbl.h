@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_EXPOSE_PGTBL_H
 #define _UAPI_EXPOSE_PGTBL_H
 
@@ -15,9 +16,9 @@ struct expose_pgtbl_args {
 };
 
 struct walk_page_args {
-	pid_t pid;           
-	unsigned long vaddr; 
-	unsigned long paddr; 
+	pid_t pid;
+	unsigned long vaddr;
+	unsigned long paddr;
 };
 
 #endif /* _UAPI_EXPOSE_PGTBL_H */
