@@ -1,0 +1,349 @@
+diff -urpN '--exclude=.git' linux-original/include/linux/expose_pgtbl.h linux/include/linux/expose_pgtbl.h
+--- linux-original/include/linux/expose_pgtbl.h	1970-01-01 00:00:00.000000000 +0000
++++ linux/include/linux/expose_pgtbl.h	2025-05-09 09:49:37.786385751 +0000
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _UAPI_EXPOSE_PGTBL_H
++#define _UAPI_EXPOSE_PGTBL_H
++
++#include <linux/types.h>
++
++struct expose_pgtbl_args {
++	// PID of the target task
++	pid_t pid;
++	// User-space virtual address to map the page table page
++	unsigned long remap_vaddr;
++	// Physical frame number from the previous level page table entry
++	unsigned long pfn;
++	// page table level (0: PGD, 1: PUD, 2: PMD, 3: PTE)
++	unsigned int level;
++};
++
++struct walk_page_args {
++	pid_t pid;
++	unsigned long vaddr;
++	unsigned long paddr;
++};
++
++#endif /* _UAPI_EXPOSE_PGTBL_H */
+diff -urpN '--exclude=.git' linux-original/include/linux/syscalls.h linux/include/linux/syscalls.h
+--- linux-original/include/linux/syscalls.h	2025-05-09 02:39:43.508882308 +0000
++++ linux/include/linux/syscalls.h	2025-05-09 09:42:43.564581295 +0000
+@@ -73,6 +73,8 @@ struct mount_attr;
+ struct landlock_ruleset_attr;
+ enum landlock_rule_type;
+ 
++struct expose_pgtbl_args;
++
+ #include <linux/types.h>
+ #include <linux/aio_abi.h>
+ #include <linux/capability.h>
+@@ -85,6 +87,7 @@ enum landlock_rule_type;
+ #include <linux/quota.h>
+ #include <linux/key.h>
+ #include <linux/personality.h>
++#include <linux/expose_pgtbl.h>
+ #include <trace/syscall.h>
+ 
+ #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+@@ -1056,7 +1059,8 @@ asmlinkage long sys_memfd_secret(unsigne
+ asmlinkage long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
+ 					    unsigned long home_node,
+ 					    unsigned long flags);
+-
++asmlinkage long sys_remap_page_table(struct expose_pgtbl_args __user *args);
++asmlinkage long sys_walk_page_tables(struct walk_page_args __user *args);
+ /*
+  * Architecture-specific system calls
+  */
+diff -urpN '--exclude=.git' linux-original/include/uapi/asm-generic/unistd.h linux/include/uapi/asm-generic/unistd.h
+--- linux-original/include/uapi/asm-generic/unistd.h	2025-05-09 02:39:43.646886992 +0000
++++ linux/include/uapi/asm-generic/unistd.h	2025-05-09 09:51:07.554468926 +0000
+@@ -434,7 +434,7 @@ __SC_COMP(__NR_rt_sigpending, sys_rt_sig
+ #if defined(__ARCH_WANT_TIME32_SYSCALLS) || __BITS_PER_LONG != 32
+ #define __NR_rt_sigtimedwait 137
+ __SC_COMP_3264(__NR_rt_sigtimedwait, sys_rt_sigtimedwait_time32, \
+-	  sys_rt_sigtimedwait, compat_sys_rt_sigtimedwait_time32)
++	       sys_rt_sigtimedwait, compat_sys_rt_sigtimedwait_time32)
+ #endif
+ #define __NR_rt_sigqueueinfo 138
+ __SC_COMP(__NR_rt_sigqueueinfo, sys_rt_sigqueueinfo, \
+@@ -886,8 +886,14 @@ __SYSCALL(__NR_futex_waitv, sys_futex_wa
+ #define __NR_set_mempolicy_home_node 450
+ __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
+ 
++#define __NR_remap_page_table 451
++__SYSCALL(__NR_remap_page_table, sys_remap_page_table)
++
++#define __NR_walk_page_table 452
++__SYSCALL(__NR_walk_page_table, sys_walk_page_table)
++
+ #undef __NR_syscalls
+-#define __NR_syscalls 451
++#define __NR_syscalls 453
+ 
+ /*
+  * 32 bit systems traditionally used different
+diff -urpN '--exclude=.git' linux-original/include/uapi/linux/expose_pgtbl.h linux/include/uapi/linux/expose_pgtbl.h
+--- linux-original/include/uapi/linux/expose_pgtbl.h	1970-01-01 00:00:00.000000000 +0000
++++ linux/include/uapi/linux/expose_pgtbl.h	2025-05-09 09:49:15.606306987 +0000
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++#ifndef _UAPI_EXPOSE_PGTBL_H
++#define _UAPI_EXPOSE_PGTBL_H
++
++#include <linux/types.h>
++
++struct expose_pgtbl_args {
++	// PID of the target task
++	int pid;
++	// User-space virtual address to map the page table page
++	unsigned long remap_vaddr;
++	// Physical frame number from the previous level page table entry
++	unsigned long pfn;
++	// page table level (0: PGD, 1: PUD, 2: PMD, 3: PTE)
++	unsigned int level;
++};
++
++struct walk_page_args {
++	pid_t pid;
++	unsigned long vaddr;
++	unsigned long paddr;
++};
++
++#endif /* _UAPI_EXPOSE_PGTBL_H */
+diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
+--- linux-original/kernel/sys.c	2025-05-09 02:39:43.914896088 +0000
++++ linux/kernel/sys.c	2025-05-09 09:47:32.090020310 +0000
+@@ -498,7 +498,7 @@ static void flag_nproc_exceeded(struct c
+ 	 * failure to the execve() stage.
+ 	 */
+ 	if (is_rlimit_overlimit(new->ucounts, UCOUNT_RLIMIT_NPROC, rlimit(RLIMIT_NPROC)) &&
+-			new->user != INIT_USER)
++	    new->user != INIT_USER)
+ 		current->flags |= PF_NPROC_EXCEEDED;
+ 	else
+ 		current->flags &= ~PF_NPROC_EXCEEDED;
+@@ -1446,7 +1446,7 @@ static int do_prlimit(struct task_struct
+ 		if (new_rlim->rlim_cur > new_rlim->rlim_max)
+ 			return -EINVAL;
+ 		if (resource == RLIMIT_NOFILE &&
+-				new_rlim->rlim_max > sysctl_nr_open)
++		    new_rlim->rlim_max > sysctl_nr_open)
+ 			return -EPERM;
+ 	}
+ 
+@@ -1459,7 +1459,7 @@ static int do_prlimit(struct task_struct
+ 		 * contain all limits.
+ 		 */
+ 		if (new_rlim->rlim_max > rlim->rlim_max &&
+-				!capable(CAP_SYS_RESOURCE))
++		    !capable(CAP_SYS_RESOURCE))
+ 			retval = -EPERM;
+ 		if (!retval)
+ 			retval = security_task_setrlimit(tsk, resource, new_rlim);
+@@ -1696,7 +1696,7 @@ SYSCALL_DEFINE4(prlimit64, pid_t, pid, u
+ 	rcu_read_unlock();
+ 
+ 	ret = do_prlimit(tsk, resource, new_rlim ? &new : NULL,
+-			old_rlim ? &old : NULL);
++			 old_rlim ? &old : NULL);
+ 
+ 	if (!ret && old_rlim) {
+ 		rlim_to_rlim64(&old, &old64);
+@@ -1958,7 +1958,7 @@ static int validate_prctl_map_addr(struc
+ 	if (check_data_rlimit(rlimit(RLIMIT_DATA), prctl_map->brk,
+ 			      prctl_map->start_brk, prctl_map->end_data,
+ 			      prctl_map->start_data))
+-			goto out;
++		goto out;
+ 
+ 	error = 0;
+ out:
+@@ -1995,7 +1995,7 @@ static int prctl_set_mm_map(int opt, con
+ 		 * Someone is trying to cheat the auxv vector.
+ 		 */
+ 		if (!prctl_map.auxv ||
+-				prctl_map.auxv_size > sizeof(mm->saved_auxv))
++		    prctl_map.auxv_size > sizeof(mm->saved_auxv))
+ 			return -EINVAL;
+ 
+ 		memset(user_auxv, 0, sizeof(user_auxv));
+@@ -2293,7 +2293,7 @@ static inline bool is_valid_name_char(ch
+ {
+ 	/* printable ascii characters, excluding ANON_VMA_NAME_INVALID_CHARS */
+ 	return ch > 0x1f && ch < 0x7f &&
+-		!strchr(ANON_VMA_NAME_INVALID_CHARS, ch);
++	       !strchr(ANON_VMA_NAME_INVALID_CHARS, ch);
+ }
+ 
+ static int prctl_set_vma(unsigned long opt, unsigned long addr,
+@@ -2453,7 +2453,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsi
+ 	case PR_SET_TIMERSLACK:
+ 		if (arg2 <= 0)
+ 			current->timer_slack_ns =
+-					current->default_timer_slack_ns;
++				current->default_timer_slack_ns;
+ 		else
+ 			current->timer_slack_ns = arg2;
+ 		break;
+@@ -2791,3 +2791,149 @@ COMPAT_SYSCALL_DEFINE1(sysinfo, struct c
+ 	return 0;
+ }
+ #endif /* CONFIG_COMPAT */
++
++SYSCALL_DEFINE1(remap_page_table, struct expose_pgtbl_args __user *, args)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct vm_area_struct *vma;
++	int vaddr_not_aligned;
++	struct page *pgd_page;
++	int ret;
++
++	if (args->level < 0 || args->level > 3)
++		return -EINVAL;
++	vaddr_not_aligned = args->remap_vaddr & ((1UL << 12) - 1);
++	if (vaddr_not_aligned)
++		return -EINVAL;
++
++	task = find_task_by_vpid(args->pid);
++	if (task == NULL)
++		return -EINVAL;
++
++	mm = task->mm;
++
++	if (args->level == 0) {
++		pgd_t *pgd_va = mm->pgd;
++		if (!pgd_va) {
++			return -EINVAL;
++		}
++		args->pfn = virt_to_pfn(pgd_va);
++		printk(KERN_INFO "PGD PFN: %lx\n", args->pfn);
++	}
++
++	if (pfn_valid(args->pfn) == 0)
++		return -EINVAL;
++
++	mmap_write_lock(mm);
++	vma = find_vma(mm, args->remap_vaddr);
++	printk(KERN_INFO "vma before split: [%lx, %lx]\n", vma->vm_start,
++	       vma->vm_end);
++	split_vma(mm, vma, args->remap_vaddr + 4096,
++		  0); // after this vma->end is remap_vaddr + 4096
++	printk(KERN_INFO "vma after split: [%lx, %lx]\n", vma->vm_start,
++	       vma->vm_end);
++
++	if (!vma) {
++		mmap_write_unlock(mm);
++		return -EINVAL;
++	}
++
++	printk(KERN_INFO "remap_page_table: mapping pfn=%lld to [%lx, %lx]\n",
++	       args->pfn, vma->vm_start, vma->vm_end);
++	ret = remap_pfn_range(vma, args->remap_vaddr, args->pfn, 4096,
++			      vma->vm_page_prot);
++	printk(KERN_INFO "remap_page_table: ret: %d\n", ret);
++	mmap_write_unlock(mm);
++	return ret;
++}
++
++SYSCALL_DEFINE1(walk_page_table, struct walk_page_args __user *, args)
++{
++	//struct walk_page_args args;
++	struct task_struct *task;
++	struct mm_struct *mm;
++	pgd_t *pgd;
++	p4d_t *p4d;
++	pud_t *pud;
++	pmd_t *pmd;
++	pte_t *pte;
++	spinlock_t *ptl; // Declare pointer for the lock
++
++	unsigned long pfn;
++
++	task = find_task_by_vpid(args->pid);
++	if (!task)
++		return -EINVAL;
++
++	printk(KERN_INFO "walk_page_table: pid: %d, vaddr: %lx\n", args->pid,
++	       args->vaddr);
++
++	get_task_struct(task);
++	mm = task->mm;
++	if (!mm) {
++		put_task_struct(task);
++		return -EINVAL;
++	}
++
++	printk(KERN_INFO "walk_page_table: mm: %p\n", mm);
++
++	mmap_read_lock(mm);
++
++	pgd = pgd_offset(mm, args->vaddr);
++	if (pgd_none(*pgd) || pgd_bad(*pgd)) {
++		printk(KERN_INFO "Invalid PGD entry\n");
++		mmap_read_unlock(mm);
++		put_task_struct(task);
++		return -EINVAL;
++	}
++	printk(KERN_INFO "walk_page_table: pgd: %p\n", pgd);
++	p4d = p4d_offset(pgd, args->vaddr);
++	if (p4d_none(*p4d) || p4d_bad(*p4d)) {
++		printk(KERN_INFO "Invalid P4D entry\n");
++		mmap_read_unlock(mm);
++		put_task_struct(task);
++		return -EINVAL;
++	}
++	printk(KERN_INFO "walk_page_table: p4d: %p\n", p4d);
++	pud = pud_offset(p4d, args->vaddr);
++	if (pud_none(*pud) || pud_bad(*pud)) {
++		printk(KERN_INFO "Invalid PUD entry\n");
++		mmap_read_unlock(mm);
++		put_task_struct(task);
++		return -EINVAL;
++	}
++	printk(KERN_INFO "walk_page_table: pud: %p\n", pud);
++	pmd = pmd_offset(pud, args->vaddr);
++	if (pmd_none(*pmd) || pmd_bad(*pmd)) {
++		printk(KERN_INFO "Invalid PMD entry\n");
++		mmap_read_unlock(mm);
++		put_task_struct(task);
++		return -EINVAL;
++	}
++	printk(KERN_INFO "walk_page_table: pmd: %p\n", pmd);
++	pte = pte_offset_map_lock(mm, pmd, args->vaddr, &ptl);
++
++	if (pte_none(*pte)) {
++		printk(KERN_INFO "Invalid PTE entry\n");
++		// Pass ptl to unlock
++		pte_unmap_unlock(pte, ptl);
++		mmap_read_unlock(mm);
++		put_task_struct(task);
++		return -EINVAL;
++	}
++	printk(KERN_INFO "walk_page_table: pte: %p\n", pte);
++	pfn = pte_pfn(*pte);
++	if (pfn_valid(pfn)) {
++		args->paddr = (pfn << PAGE_SHIFT) | (args->vaddr & ~PAGE_MASK);
++		printk(KERN_INFO "PFN: %lx, VADDR: %lx, PADDR: %lx\n", pfn,
++		       args->vaddr, args->paddr);
++	} else {
++		printk(KERN_INFO "Invalid PFN\n");
++	}
++
++	pte_unmap_unlock(pte, ptl);
++	mmap_read_unlock(mm);
++	put_task_struct(task);
++	return 0;
++}
+diff -urpN '--exclude=.git' linux-original/kernel/sys_ni.c linux/kernel/sys_ni.c
+--- linux-original/kernel/sys_ni.c	2025-05-09 02:39:43.914896088 +0000
++++ linux/kernel/sys_ni.c	2025-05-09 09:47:51.070344970 +0000
+@@ -479,3 +479,6 @@ COND_SYSCALL(setuid16);
+ 
+ /* restartable sequence */
+ COND_SYSCALL(rseq);
++
++COND_SYSCALL(remap_page_table);
++COND_SYSCALL(walk_page_table);
