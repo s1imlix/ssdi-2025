@@ -1,5 +1,12 @@
 # SSDI Homework 1 Writeup
 
+## Contribution
+*(Added on 2026-11-21 based on the repository commit history.)*
+
+B11902083 徐粲桓：core rootkit LKM (`rootkit.c`, `rootkit.h`, `shared_rootkit.h`: `kallsyms_lookup_name` lookup, `.rodata` write enable, module hide/unhide, process masquerading, `read`/`mkdir` syscall filtering, general cleanup) and testbench (`test.c`, `child.c`)
+B11902050 范綱佑：module exit cleanup, initialization and error-code fixes, and testbench updates (`test.c`, `child.c`)
+41173058H 鍾詠傑：`write-up.md`
+
 ## Directory Structure
 Our source code consists of the following file:
 ```

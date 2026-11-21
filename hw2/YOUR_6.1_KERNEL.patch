@@ -1,8 +1,27 @@
-diff -urpN '--exclude=.git' linux-original/include/linux/expose_pgtbl.h linux/include/linux/expose_pgtbl.h
---- linux-original/include/linux/expose_pgtbl.h	1970-01-01 00:00:00.000000000 +0000
-+++ linux/include/linux/expose_pgtbl.h	2025-05-09 09:49:37.786385751 +0000
+From 3e1dd4a4e5ab04793001d762a4279c59c424b894 Mon Sep 17 00:00:00 2001
+From: Slimlix Hsu <slime.creeper3@gmail.com>
+Date: Fri, 9 May 2025 23:06:43 +0800
+Subject: [PATCH] aaaa
+
+Signed-off-by: Slimlix Hsu <slime.creeper3@gmail.com>
+---
+ include/linux/expose_pgtbl.h      |  24 +++++
+ include/linux/syscalls.h          |   6 +-
+ include/uapi/asm-generic/unistd.h |  10 +-
+ include/uapi/linux/expose_pgtbl.h |  24 +++++
+ kernel/sys.c                      | 163 ++++++++++++++++++++++++++++--
+ kernel/sys_ni.c                   |   3 +
+ 6 files changed, 219 insertions(+), 11 deletions(-)
+ create mode 100644 include/linux/expose_pgtbl.h
+ create mode 100644 include/uapi/linux/expose_pgtbl.h
+
+diff --git a/include/linux/expose_pgtbl.h b/include/linux/expose_pgtbl.h
+new file mode 100644
+index 000000000..56b2b0f68
+--- /dev/null
++++ b/include/linux/expose_pgtbl.h
 @@ -0,0 +1,24 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 +#ifndef _UAPI_EXPOSE_PGTBL_H
 +#define _UAPI_EXPOSE_PGTBL_H
 +
@@ -26,9 +45,10 @@ diff -urpN '--exclude=.git' linux-original/include/linux/expose_pgtbl.h linux/in
 +};
 +
 +#endif /* _UAPI_EXPOSE_PGTBL_H */
-diff -urpN '--exclude=.git' linux-original/include/linux/syscalls.h linux/include/linux/syscalls.h
---- linux-original/include/linux/syscalls.h	2025-05-09 02:39:43.508882308 +0000
-+++ linux/include/linux/syscalls.h	2025-05-09 09:42:43.564581295 +0000
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index a34b0f9a9..581c44d26 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
 @@ -73,6 +73,8 @@ struct mount_attr;
  struct landlock_ruleset_attr;
  enum landlock_rule_type;
@@ -46,7 +66,7 @@ diff -urpN '--exclude=.git' linux-original/include/linux/syscalls.h linux/includ
  #include <trace/syscall.h>
  
  #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
-@@ -1056,7 +1059,8 @@ asmlinkage long sys_memfd_secret(unsigne
+@@ -1056,7 +1059,8 @@ asmlinkage long sys_memfd_secret(unsigned int flags);
  asmlinkage long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
  					    unsigned long home_node,
  					    unsigned long flags);
@@ -56,10 +76,11 @@ diff -urpN '--exclude=.git' linux-original/include/linux/syscalls.h linux/includ
  /*
   * Architecture-specific system calls
   */
-diff -urpN '--exclude=.git' linux-original/include/uapi/asm-generic/unistd.h linux/include/uapi/asm-generic/unistd.h
---- linux-original/include/uapi/asm-generic/unistd.h	2025-05-09 02:39:43.646886992 +0000
-+++ linux/include/uapi/asm-generic/unistd.h	2025-05-09 09:51:07.554468926 +0000
-@@ -434,7 +434,7 @@ __SC_COMP(__NR_rt_sigpending, sys_rt_sig
+diff --git a/include/uapi/asm-generic/unistd.h b/include/uapi/asm-generic/unistd.h
+index 45fa180cc..e8e36a5b9 100644
+--- a/include/uapi/asm-generic/unistd.h
++++ b/include/uapi/asm-generic/unistd.h
+@@ -434,7 +434,7 @@ __SC_COMP(__NR_rt_sigpending, sys_rt_sigpending, compat_sys_rt_sigpending)
  #if defined(__ARCH_WANT_TIME32_SYSCALLS) || __BITS_PER_LONG != 32
  #define __NR_rt_sigtimedwait 137
  __SC_COMP_3264(__NR_rt_sigtimedwait, sys_rt_sigtimedwait_time32, \
@@ -68,7 +89,7 @@ diff -urpN '--exclude=.git' linux-original/include/uapi/asm-generic/unistd.h lin
  #endif
  #define __NR_rt_sigqueueinfo 138
  __SC_COMP(__NR_rt_sigqueueinfo, sys_rt_sigqueueinfo, \
-@@ -886,8 +886,14 @@ __SYSCALL(__NR_futex_waitv, sys_futex_wa
+@@ -886,8 +886,14 @@ __SYSCALL(__NR_futex_waitv, sys_futex_waitv)
  #define __NR_set_mempolicy_home_node 450
  __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
  
@@ -84,9 +105,11 @@ diff -urpN '--exclude=.git' linux-original/include/uapi/asm-generic/unistd.h lin
  
  /*
   * 32 bit systems traditionally used different
-diff -urpN '--exclude=.git' linux-original/include/uapi/linux/expose_pgtbl.h linux/include/uapi/linux/expose_pgtbl.h
---- linux-original/include/uapi/linux/expose_pgtbl.h	1970-01-01 00:00:00.000000000 +0000
-+++ linux/include/uapi/linux/expose_pgtbl.h	2025-05-09 09:49:15.606306987 +0000
+diff --git a/include/uapi/linux/expose_pgtbl.h b/include/uapi/linux/expose_pgtbl.h
+new file mode 100644
+index 000000000..d5b1f0932
+--- /dev/null
++++ b/include/uapi/linux/expose_pgtbl.h
 @@ -0,0 +1,24 @@
 +/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 +#ifndef _UAPI_EXPOSE_PGTBL_H
@@ -106,16 +129,17 @@ diff -urpN '--exclude=.git' linux-original/include/uapi/linux/expose_pgtbl.h lin
 +};
 +
 +struct walk_page_args {
-+	pid_t pid;
++	int pid;
 +	unsigned long vaddr;
 +	unsigned long paddr;
 +};
 +
 +#endif /* _UAPI_EXPOSE_PGTBL_H */
-diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
---- linux-original/kernel/sys.c	2025-05-09 02:39:43.914896088 +0000
-+++ linux/kernel/sys.c	2025-05-09 09:47:32.090020310 +0000
-@@ -498,7 +498,7 @@ static void flag_nproc_exceeded(struct c
+diff --git a/kernel/sys.c b/kernel/sys.c
+index 5fd54bf0e..5a0b436cd 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -498,7 +498,7 @@ static void flag_nproc_exceeded(struct cred *new)
  	 * failure to the execve() stage.
  	 */
  	if (is_rlimit_overlimit(new->ucounts, UCOUNT_RLIMIT_NPROC, rlimit(RLIMIT_NPROC)) &&
@@ -124,7 +148,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  		current->flags |= PF_NPROC_EXCEEDED;
  	else
  		current->flags &= ~PF_NPROC_EXCEEDED;
-@@ -1446,7 +1446,7 @@ static int do_prlimit(struct task_struct
+@@ -1446,7 +1446,7 @@ static int do_prlimit(struct task_struct *tsk, unsigned int resource,
  		if (new_rlim->rlim_cur > new_rlim->rlim_max)
  			return -EINVAL;
  		if (resource == RLIMIT_NOFILE &&
@@ -133,7 +157,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  			return -EPERM;
  	}
  
-@@ -1459,7 +1459,7 @@ static int do_prlimit(struct task_struct
+@@ -1459,7 +1459,7 @@ static int do_prlimit(struct task_struct *tsk, unsigned int resource,
  		 * contain all limits.
  		 */
  		if (new_rlim->rlim_max > rlim->rlim_max &&
@@ -142,7 +166,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  			retval = -EPERM;
  		if (!retval)
  			retval = security_task_setrlimit(tsk, resource, new_rlim);
-@@ -1696,7 +1696,7 @@ SYSCALL_DEFINE4(prlimit64, pid_t, pid, u
+@@ -1696,7 +1696,7 @@ SYSCALL_DEFINE4(prlimit64, pid_t, pid, unsigned int, resource,
  	rcu_read_unlock();
  
  	ret = do_prlimit(tsk, resource, new_rlim ? &new : NULL,
@@ -151,7 +175,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  
  	if (!ret && old_rlim) {
  		rlim_to_rlim64(&old, &old64);
-@@ -1958,7 +1958,7 @@ static int validate_prctl_map_addr(struc
+@@ -1958,7 +1958,7 @@ static int validate_prctl_map_addr(struct prctl_mm_map *prctl_map)
  	if (check_data_rlimit(rlimit(RLIMIT_DATA), prctl_map->brk,
  			      prctl_map->start_brk, prctl_map->end_data,
  			      prctl_map->start_data))
@@ -160,7 +184,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  
  	error = 0;
  out:
-@@ -1995,7 +1995,7 @@ static int prctl_set_mm_map(int opt, con
+@@ -1995,7 +1995,7 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
  		 * Someone is trying to cheat the auxv vector.
  		 */
  		if (!prctl_map.auxv ||
@@ -169,7 +193,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  			return -EINVAL;
  
  		memset(user_auxv, 0, sizeof(user_auxv));
-@@ -2293,7 +2293,7 @@ static inline bool is_valid_name_char(ch
+@@ -2293,7 +2293,7 @@ static inline bool is_valid_name_char(char ch)
  {
  	/* printable ascii characters, excluding ANON_VMA_NAME_INVALID_CHARS */
  	return ch > 0x1f && ch < 0x7f &&
@@ -178,7 +202,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  }
  
  static int prctl_set_vma(unsigned long opt, unsigned long addr,
-@@ -2453,7 +2453,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsi
+@@ -2453,7 +2453,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
  	case PR_SET_TIMERSLACK:
  		if (arg2 <= 0)
  			current->timer_slack_ns =
@@ -187,7 +211,7 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
  		else
  			current->timer_slack_ns = arg2;
  		break;
-@@ -2791,3 +2791,149 @@ COMPAT_SYSCALL_DEFINE1(sysinfo, struct c
+@@ -2791,3 +2791,150 @@ COMPAT_SYSCALL_DEFINE1(sysinfo, struct compat_sysinfo __user *, info)
  	return 0;
  }
  #endif /* CONFIG_COMPAT */
@@ -207,11 +231,12 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
 +	if (vaddr_not_aligned)
 +		return -EINVAL;
 +
-+	task = find_task_by_vpid(args->pid);
++	task = pid_task(find_get_pid(args->pid), PIDTYPE_PID);
 +	if (task == NULL)
 +		return -EINVAL;
-+
-+	mm = task->mm;
++	mm = get_task_mm(task);
++	if (mm == NULL)
++		return -EINVAL;
 +
 +	if (args->level == 0) {
 +		pgd_t *pgd_va = mm->pgd;
@@ -337,9 +362,10 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys.c linux/kernel/sys.c
 +	put_task_struct(task);
 +	return 0;
 +}
-diff -urpN '--exclude=.git' linux-original/kernel/sys_ni.c linux/kernel/sys_ni.c
---- linux-original/kernel/sys_ni.c	2025-05-09 02:39:43.914896088 +0000
-+++ linux/kernel/sys_ni.c	2025-05-09 09:47:51.070344970 +0000
+diff --git a/kernel/sys_ni.c b/kernel/sys_ni.c
+index 860b2dcf3..56971ea9e 100644
+--- a/kernel/sys_ni.c
++++ b/kernel/sys_ni.c
 @@ -479,3 +479,6 @@ COND_SYSCALL(setuid16);
  
  /* restartable sequence */
@@ -347,3 +373,6 @@ diff -urpN '--exclude=.git' linux-original/kernel/sys_ni.c linux/kernel/sys_ni.c
 +
 +COND_SYSCALL(remap_page_table);
 +COND_SYSCALL(walk_page_table);
+-- 
+2.49.0
+

@@ -1,13 +1,28 @@
 # SSDI Homework 2 Writeup
 ## Group 15
 
-> Each of the groups is required to provide a write-up about the assignment. The write-up should include the instructions for how to compile and run your test programs, some explanation of your source code (e.g. description of how your code and test program work), and contributions from each of your group members.
+## Contribution
+B11902083 徐粲桓：`remap_page_table`, `map_fault_va_to_pa`, and fault handler
+B11902050 范綱佑：`va_to_pa`, testing programs and syscall, write-up
+41173058H 鍾詠傑: Early debugging help
 
-## Compilation 
+## Directory structure
+```
+hw2
+├── helper.c
+├── helper.h
+├── Makefile
+├── test.c
+├── userfaultfd.c
+├── YOUR_6.1_KERNEL.patch
+└── write-up.md
+```
 
-To apply the kernel patch, run the following command in the kernel directory.
-```c
-patch -p1 < {location of the patch}/ver1_6.1_KERNEL.patch
+## Compilation and patch instruction
+
+First of all, to apply the kernel patch, run the following command in a fresh Linux v6.1 kernel directory.
+```
+git am YOUR_6.1_KERNEL.patch
 ```
 
 For compiling the kernel, `make` command from Environment Setup should be sufficient.
@@ -15,17 +30,32 @@ For compiling the kernel, `make` command from Environment Setup should be suffic
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 ```
 
-For `Makefile` (for userspace program) to work, run `make -C ./linux headers_install INSTALL_HDR_PATH=./linux-headers ARCH=arm64` under `linux/`, this exposes necessary headers for userspace program under `linux/linux-headers/include`.
+Next, to expose necessary headers for our userspace program, run `headers_install` in the kernel directory.
+```
+make headers_install INSTALL_HDR_PATH=./linux-headers ARCH=arm64
+```
+This exposes necessary headers for userspace program under `linux/linux-headers/include`.
 
-Compiling userspace program is done using provided `Makefile`. Usual `make` and `make clean` suffices (However, please make sure `KERNEL_HEADERS := $(PWD)/../linux/linux-headers/include` is correctly set, here it assumes `Makefile` is located in `user/`.)
+Compiling userspace program is done using provided `Makefile`. Usual `make` and `make clean` suffices However, please make sure `KERNEL_HEADERS := $(PWD)/../linux/linux-headers/include` is correctly set to where `linux/linux-headers/include` is. Expected way to test our program is to setup the following directory structure:
+```
+.
+├── users/
+│   ├── helper.c
+│   ├── helper.h
+│   ├── Makefile
+│   ├── test.c
+│   ├── userfaultfd.c
+└── linux/
+```
 
 
 ## Source Code & Testing 
 
-### `remap_map_table`
+### `remap_page_table`
 Creating this new syscall requires modification for the following files:
 ```
 $KDIR/include/linux/expose_pgtbl.h
+$KDIR/include/uapi/linux/
 $KDIR/include/linux/syscalls.h
 $KDIR/include/uapi/asm-generic/unistd.h
 $KDIR/kernel/sys.c
@@ -38,24 +68,24 @@ The input validation directly reject the following conditions, alongside other c
 
 - `args->level < 0 || args->level > 3` for invalid page table level
 - `args->remap_vaddr & ((1UL << 12) - 1)` for un-aligned virtual addresses
-- `find_task_by_vpid(args->pid)==NULL` for invalid PID
+- `task = pid_task(find_get_pid(args->pid), PIDTYPE_PID); task == NULL` for invalid PID
 - `pfn_valid(args->pfn) == 0` for invalid PFN; For requests for PGD, `virt_to_pfn(pgd_va)` is used to retrieve the PFN before being checked.
 
 In the proceeding part, we try locate the vma for the requested virtual address, split them if exceeding 4096, and finally call `remap_pfn_range()`, all enclosed in a `mmap_write_lock`. 
 
 ```c
-    mmap_write_lock(mm);
-	vma = find_vma(mm, args->remap_vaddr);
-	split_vma(mm, vma, args->remap_vaddr + 4096,
-		  0); // after this vma->end is remap_vaddr + 4096
-	if (!vma) {
-		mmap_read_unlock(mm);
-		return -EINVAL;
-	}
-	ret = remap_pfn_range(vma, args->remap_vaddr, args->pfn, 4096,
-			      vma->vm_page_prot);
-	printk(KERN_INFO "remap_page_table: ret: %d\n", ret);
-	mmap_write_unlock(mm);
+mmap_write_lock(mm);
+vma = find_vma(mm, args->remap_vaddr);
+split_vma(mm, vma, args->remap_vaddr + 4096, 0); 
+// after this vma->end is remap_vaddr + 4096
+
+if (!vma) {
+    mmap_read_unlock(mm);
+    return -EINVAL;
+}
+ret = remap_pfn_range(vma, args->remap_vaddr, args->pfn, 4096,
+              vma->vm_page_prot);
+mmap_write_unlock(mm);
 ```
 
 #### Test Program: `test.c`
@@ -101,9 +131,10 @@ pa = (next_pfn << PAGE_SHIFT) | (va & (PAGE_SIZE - 1));
 ```
 
 #### Test Program: `test2.c`
-This test program is meant to test `va_to_pa`, used in `userfaultfd.c`. It implemented the following features:
+A test program was written to test `va_to_pa` in earlier stage of the development. While we did not attach the code since it is no longer functional after iterations, we describe it here for reference purposes and to provide context. The program implemented the following features:
 - Use `va_to_pa`, described earlier, to retrieve the physical address given virtual address.
-- Compare the result with a custom-created syscall `walk_page_table` that walk the page table from the kernelspace and check if them match
+- Compare the result with a custom-created syscall `walk_page_table` that walk the page table from the kernelspace and check if the two results match, hence confirming the correctness of the `va_to_pa` implementaion.
+
 
 ##### Test System Call: `walk_page_table()`
 For testing the correctness of result from `va_to_pa()`, we implemented an additional system call `walk_page_table()` which enable comparing page table walk from the kernelspace side.
@@ -132,10 +163,10 @@ When given a `fault_va`, we first do a `va_to_pa` to retrieve its physical addre
 
 Each time it stopped at a non-PTE table, we allocate a new page for the page table, retrieve the pfn of the new region. If it stop at PTE, we use the provided pte from the call.
 
-Using the derived pfn, we update the mapping correspondingly.
-Particularly, we discovered that the PTE entry must have the other flags set manually before we wake up the main thread, otherwise the entry will be modified by kernel and corrupt `pfn`.
+Using the derived pfn, we update the mapping correspondingly using pre-defined `PHYS_ADDR_MASK` and set the corresponding valid bit.
+
 ```c
-entry_value = (pte) | 0xe8000000000f43UL;
+entry_value = (pte & PHYS_ADDR_MASK) | 0x1UL;
 ```
 
 To effectively wake up main thread, we attempt writing 0:
@@ -167,7 +198,7 @@ Using the result from `va_to_pa`, we can decide whether to proceed based on if i
 
 ### Safe cleanup
 
-Since we essentially created two VA mappings to the same physical page, naively calling `munmap()` on both VA will cause undefined behavior. The method we employed was cleaning up the PTEs we previously modified at `fault_addr`, then 
+Since we essentially created two VA mappings to the same physical page, naively calling `munmap()` on both VA will cause undefined behavior. The method we employed was cleaning up the PTEs we previously modified at `fault_addr`.
 
 
 #### `clean_va`
